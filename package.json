@@ -1,0 +1,16 @@
+{
+  "name": "weather",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal weather dashboard: forecast, advisories, radar, lightning, wind, hurricanes, surf, air quality.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "leaflet": "1.9.4"
+  }
+}

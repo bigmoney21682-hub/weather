@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit + user-scalable so pinch-zoom works on maps AND the page itself -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0b0f18" />
+    <meta name="description" content="A private personal weather dashboard: hourly forecast, advisories, radar, lightning, wind, hurricanes, surf and air quality." />
+    <meta name="referrer" content="no-referrer" />
+    <title>Weather</title>
+
+    <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="/css/app.css" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script src="/vendor/leaflet/leaflet.js" defer></script>
+  </head>
+  <body>
+    <header class="page-head">
+      <div class="page-head-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <circle cx="11" cy="12" r="6" fill="#ffd166" />
+              <path d="M24 24H11.5A5.5 5.5 0 0 1 10.7 13a7.6 7.6 0 0 1 14-1.1A6 6 0 0 1 24 24Z" fill="#dfe8f5" />
+            </svg>
+          </span>
+          <div>
+            <h1>Weather</h1>
+            <p>Everything I actually check, on one page.</p>
+          </div>
+        </div>
+        <nav class="jumps" aria-label="Jump to section">
+          <a href="#weather" data-jump="weather">Forecast</a>
+          <a href="#advisories" data-jump="advisories">Advisories</a>
+          <a href="#radar" data-jump="radar">Radar</a>
+          <a href="#lightning" data-jump="lightning">Lightning</a>
+          <a href="#wind" data-jump="wind">Wind</a>
+          <a href="#hurricanes" data-jump="hurricanes">Hurricanes</a>
+          <a href="#surf" data-jump="surf">Surf</a>
+          <a href="#air" data-jump="air">Air</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="app"></main>
+
+    <footer class="page-foot">
+      <p>
+        Data: Open-Meteo · NOAA/National Weather Service · National Hurricane Center · Joint Typhoon Warning Center ·
+        NOAA Tides &amp; Currents · RainViewer · Blitzortung.org · OpenStreetMap &amp; CARTO
+      </p>
+      <p class="fine-print">
+        Forecasts and lightning data are for information only — always follow official warnings from your local
+        weather service. &copy; <span id="year"></span>
+      </p>
+    </footer>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>
