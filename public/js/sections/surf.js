@@ -102,7 +102,7 @@ export function surfSection() {
       ui.ready();
       if (!data.water) ui.note(data.note);
     } catch (err) {
-      if (mine === token) ui.error(err.message);
+      if (mine === token) ui.error(err.message, () => load(place));
     }
   }
 

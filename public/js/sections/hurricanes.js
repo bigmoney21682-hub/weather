@@ -86,7 +86,7 @@ export function hurricaneSection() {
       select(pick?.id || storms[0].id);
       ui.ready();
     } catch (err) {
-      ui.error(`Storm data unavailable: ${err.message}`);
+      ui.error(`Storm data unavailable: ${err.message}`, loadList);
     }
   }
 

@@ -152,7 +152,7 @@ export function radarSection() {
       ui.ready();
       if (playing) play();
     } catch (err) {
-      ui.error(`Radar unavailable: ${err.message}`);
+      ui.error(`Radar unavailable: ${err.message}`, loadFrames);
     }
   }
 

@@ -270,6 +270,21 @@ main {
   border-color: rgba(255, 90, 120, 0.3);
 }
 
+.retry-btn {
+  margin-left: 9px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.retry-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .card-status.note {
   color: #ffe1a8;
   background: rgba(255, 204, 77, 0.08);
@@ -1525,8 +1540,18 @@ main {
     --ink-faint: #6b7691;
     --cloud: #b9c6da;
     --cloud-dim: #8494ad;
-    --chart-grid: rgba(16, 24, 40, 0.09);
-    --chart-text: rgba(40, 52, 78, 0.6);
+    /* Pale weather glyphs vanish on a white card, so darken them here. */
+    --sun: #f0a91e;
+    --moon: #8ea0bd;
+    --snow: #8fb4d8;
+    --bolt: #e8a90c;
+    --rain: #3b9fe0;
+    --wind: #2f8fd4;
+    --gust: #e08b2a;
+    --surf: #17a894;
+    --air: #7c5cf0;
+    --chart-grid: rgba(16, 24, 40, 0.11);
+    --chart-text: rgba(34, 45, 68, 0.78);
     --shadow: 0 8px 28px rgba(16, 30, 60, 0.1);
   }
 

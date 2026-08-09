@@ -85,7 +85,10 @@ function render(ui, data, place) {
               el('span', { class: 'alert-event', text: a.event }),
               el('span', { class: 'alert-when', text: windowText(a) }),
             ),
-            el('span', { class: 'alert-badge', text: a.severity || 'Unknown' }),
+            // Plenty of alerts carry severity "Unknown"; a badge saying so is noise.
+            a.severity && a.severity !== 'Unknown'
+              ? el('span', { class: 'alert-badge', text: a.severity })
+              : null,
           ),
           detail,
         );

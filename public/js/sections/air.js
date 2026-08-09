@@ -121,7 +121,12 @@ export function airSection() {
             {},
             el('b', { text: a.event }),
             el('p', { text: a.headline || a.areaDesc }),
-            el('span', { class: 'fine-print', text: `${a.distanceMiles} mi away${a.expires ? ` · until ${clock(a.expires)}` : ''}` }),
+            el('span', {
+              class: 'fine-print',
+              text:
+                (a.distanceMiles ? `${a.distanceMiles} mi away` : 'in effect for your area') +
+                (a.expires ? ` · until ${clock(a.expires)}` : ''),
+            }),
           ),
         ),
       );

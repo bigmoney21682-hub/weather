@@ -44,10 +44,13 @@ export function createSection({ id, title, subtitle, icon, tools }) {
       status.className = 'card-status loading';
       status.textContent = message;
     },
-    error(message) {
+    error(message, onRetry) {
       status.className = 'card-status error';
       clear(status);
       status.append(el('span', { text: message }));
+      if (onRetry) {
+        status.append(el('button', { class: 'retry-btn', type: 'button', text: 'Try again', onClick: onRetry }));
+      }
     },
     note(message) {
       status.className = 'card-status note';
@@ -70,8 +73,11 @@ export function createSection({ id, title, subtitle, icon, tools }) {
  */
 export function bindLocation(ui, load, { placeholder = 'Set a location above to see this section.' } = {}) {
   let token = 0;
-  onLocation(async (place) => {
+  let lastPlace = null;
+
+  async function run(place) {
     const mine = ++token;
+    lastPlace = place;
     if (!place) {
       ui.ready();
       ui.empty(placeholder);
@@ -83,10 +89,12 @@ export function bindLocation(ui, load, { placeholder = 'Set a location above to 
       if (mine === token) ui.ready();
     } catch (err) {
       if (mine !== token) return;
-      ui.error(err.message || 'Could not load this section.');
+      ui.error(err.message || 'Could not load this section.', () => run(lastPlace));
     }
-  });
-  return () => ++token;
+  }
+
+  onLocation(run);
+  return run;
 }
 
 export function statTile(label, value, extra) {

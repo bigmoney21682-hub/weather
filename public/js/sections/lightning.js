@@ -74,7 +74,7 @@ export function lightningSection() {
       render(data, place);
       ui.ready();
     } catch (err) {
-      ui.error(`Lightning feed unavailable: ${err.message}`);
+      ui.error(`Lightning feed unavailable: ${err.message}`, refresh);
     }
   }
 
