@@ -73,16 +73,20 @@ export function hurricaneSection() {
         stormLayer.clearLayers();
         return;
       }
-      // Default to the storm nearest the user, else the strongest one going.
+      // Default to the storm nearest the user, else the strongest one going —
+      // in both cases preferring a system still under warning over one that has
+      // had its final bulletin.
       const place = getLocation();
+      const live = storms.filter((s) => !s.finalWarning);
+      const pool = live.length ? live : storms;
       const pick = place
-        ? storms
+        ? pool
             .filter((s) => s.lat != null)
             .sort(
               (a, b) =>
                 Math.hypot(a.lat - place.lat, a.lon - place.lon) - Math.hypot(b.lat - place.lat, b.lon - place.lon),
             )[0]
-        : storms.slice().sort((a, b) => (b.windMph || 0) - (a.windMph || 0))[0];
+        : pool.slice().sort((a, b) => (b.windMph || 0) - (a.windMph || 0))[0];
       select(pick?.id || storms[0].id);
       ui.ready();
     } catch (err) {
@@ -98,12 +102,17 @@ export function hurricaneSection() {
         el(
           'button',
           {
-            class: `storm-chip cat-${s.class}`,
+            class: `storm-chip cat-${s.class}${s.finalWarning ? ' is-final' : ''}`,
             type: 'button',
             dataset: { id: s.id },
             onClick: () => select(s.id),
           },
-          el('span', { class: 'storm-chip-name', text: s.name }),
+          el(
+            'span',
+            { class: 'storm-chip-name' },
+            s.name,
+            s.finalWarning ? el('span', { class: 'storm-final-tag', text: 'final' }) : null,
+          ),
           el('span', { class: 'storm-chip-meta', text: `${s.label} · ${s.windMph ? `${s.windMph} mph` : s.basin}` }),
         ),
       ),
@@ -242,6 +251,12 @@ export function hurricaneSection() {
         { class: 'storm-head' },
         el('h3', { class: `storm-name cat-${storm.class}`, text: `${storm.classification || ''} ${storm.name}`.trim() }),
         el('span', { class: 'storm-basin', text: `${storm.basin} · ${storm.agency}${storm.lastUpdate ? ` · updated ${clock(storm.lastUpdate)}` : ''}` }),
+        storm.finalWarning
+          ? el('p', {
+              class: 'storm-final-note',
+              text: `${storm.agency} has issued its final warning on ${storm.name} — the system is dissipating or has become extratropical, and no further advisories are expected. It will drop off this list once the bulletin expires.`,
+            })
+          : null,
       ),
       stats,
       el('h4', { class: 'sub-head', text: 'Forecast intensity' }),

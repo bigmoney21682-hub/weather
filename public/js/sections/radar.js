@@ -8,6 +8,7 @@
 import { api, el, clear } from '../util.js';
 import { createSection } from '../section.js';
 import { createMap, homeMarker, observeSize } from '../map.js';
+import { radarTileLayer } from '../radar-tiles.js';
 import { onLocation, getLocation } from '../store.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><circle cx="12" cy="12" r="9" stroke="var(--radar)" stroke-width="1.6"/><circle cx="12" cy="12" r="5.5" stroke="var(--radar)" stroke-width="1.2" opacity=".6"/><circle cx="12" cy="12" r="2" fill="var(--radar)"/><path d="M12 12 19 7" stroke="var(--radar)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
@@ -15,8 +16,14 @@ const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><circle cx="1
 const SPEEDS = [
   { label: '0.5×', ms: 800 },
   { label: '1×', ms: 420 },
-  { label: '2×', ms: 210 },
 ];
+
+// RainViewer publishes an observed frame every ten minutes. The loop advances
+// in five-minute steps, filling the gaps by cross-fading the frames on either
+// side, which reads as a much smoother sweep than jumping a full ten.
+const STEP_SECONDS = 300;
+const MAX_TWEENS = 3; // don't try to bridge a long gap in the feed
+const FRAME_OPACITY = 0.78;
 
 export function radarSection() {
   const ui = createSection({
@@ -30,7 +37,7 @@ export function radarSection() {
   const timeLabel = el('span', { class: 'frame-time', text: '—' });
   const playBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Pause', text: '❚❚' });
   const scrub = el('input', { type: 'range', class: 'scrub', min: '0', max: '0', value: '0', 'aria-label': 'Radar frame' });
-  const speedBtn = el('button', { class: 'chip', type: 'button', text: '1×' });
+  const speedBtn = el('button', { class: 'chip', type: 'button', text: SPEEDS[0].label });
   const recenter = el('button', { class: 'chip', type: 'button', text: 'Recenter' });
 
   clear(ui.body).append(
@@ -55,10 +62,11 @@ export function radarSection() {
 
   let map;
   let frames = [];
+  let steps = [];
   let layers = [];
   let index = 0;
   let timer = null;
-  let speed = 1;
+  let speed = 0;
   let playing = true;
   let marker = null;
 
@@ -73,26 +81,71 @@ export function radarSection() {
     return map;
   }
 
-  function show(i, { immediate = false } = {}) {
-    if (!frames.length) return;
-    index = ((i % frames.length) + frames.length) % frames.length;
+  /**
+   * Expand the observed frames into five-minute steps. Each step names the
+   * frame it comes from and, for the in-between ones, the frame it is fading
+   * towards.
+   */
+  function buildSteps(list) {
+    const out = [];
+    list.forEach((frame, i) => {
+      out.push({ time: frame.time, nowcast: frame.nowcast, from: i, to: null, blend: 0 });
+
+      const next = list[i + 1];
+      if (!next) return;
+      const tweens = Math.min(MAX_TWEENS, Math.round((next.time - frame.time) / STEP_SECONDS) - 1);
+      for (let k = 1; k <= tweens; k++) {
+        out.push({
+          time: frame.time + k * STEP_SECONDS,
+          nowcast: frame.nowcast || next.nowcast,
+          from: i,
+          to: i + 1,
+          blend: k / (tweens + 1),
+        });
+      }
+    });
+    return out;
+  }
+
+  function show(i) {
+    if (!steps.length) return;
+    index = ((i % steps.length) + steps.length) % steps.length;
+    const step = steps[index];
+
+    addLayer(step.from);
+    if (step.to != null) addLayer(step.to);
+
+    // Two stacked translucent layers would wash out at 50/50, so the upper
+    // one is boosted to land the composite back on FRAME_OPACITY.
+    const fromOpacity = FRAME_OPACITY * (1 - step.blend);
+    const toOpacity = step.to == null ? 0 : (FRAME_OPACITY - fromOpacity) / (1 - fromOpacity);
     layers.forEach((layer, j) => {
       if (!layer) return;
-      layer.setOpacity(j === index ? 0.78 : 0);
+      layer.setOpacity(j === step.from ? fromOpacity : j === step.to ? toOpacity : 0);
     });
-    // Warm the next frame so the loop never stalls on a tile fetch.
-    addLayer((index + 1) % frames.length);
-    const f = frames[index];
-    timeLabel.textContent = new Date(f.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + (f.nowcast ? ' (forecast)' : '');
-    timeLabel.classList.toggle('is-nowcast', Boolean(f.nowcast));
+
+    // Warm the frames the next step will need so the loop never stalls.
+    const upcoming = steps[(index + 1) % steps.length];
+    addLayer(upcoming.from);
+    if (upcoming.to != null) addLayer(upcoming.to);
+
+    timeLabel.textContent =
+      new Date(step.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
+      (step.nowcast ? ' (forecast)' : '');
+    timeLabel.classList.toggle('is-nowcast', Boolean(step.nowcast));
+    timeLabel.title = step.to == null ? 'Observed radar frame' : 'Blended between the frames either side';
     scrub.value = String(index);
-    if (immediate) scrub.value = String(index);
   }
 
   function addLayer(i) {
     if (layers[i] || !map) return;
-    const f = frames[i];
-    layers[i] = L.tileLayer(f.url, { opacity: 0, zIndex: 400 + i, maxZoom: 19, tileSize: 512, zoomOffset: -1 }).addTo(map);
+    layers[i] = radarTileLayer(frames[i].url, {
+      opacity: 0,
+      zIndex: 400 + i,
+      maxZoom: 19,
+      tileSize: 512,
+      zoomOffset: -1,
+    }).addTo(map);
   }
 
   function tick() {
@@ -140,15 +193,15 @@ export function radarSection() {
       });
       frames = [...data.past.map((f) => build(f, false)), ...data.nowcast.slice(0, 3).map((f) => build(f, true))];
       if (!frames.length) throw new Error('No radar frames were returned.');
+      steps = buildSteps(frames);
 
       ensureMap();
       layers.forEach((l) => l && map.removeLayer(l));
       layers = new Array(frames.length).fill(null);
-      scrub.max = String(frames.length - 1);
-      // Start at the most recent observed frame rather than the nowcast.
-      const lastObserved = Math.max(0, data.past.length - 1);
-      addLayer(lastObserved);
-      show(lastObserved, { immediate: true });
+      scrub.max = String(steps.length - 1);
+      // Start on the most recent observed frame rather than in the nowcast.
+      const lastObserved = steps.findIndex((s) => s.from === Math.max(0, data.past.length - 1) && s.to == null);
+      show(lastObserved < 0 ? 0 : lastObserved);
       ui.ready();
       if (playing) play();
     } catch (err) {

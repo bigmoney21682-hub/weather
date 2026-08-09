@@ -1,7 +1,19 @@
 // The sticky location bar at the top of the page. Every section reads from it.
 
 import { el, clear, mount } from './util.js';
-import { getLocation, onLocation, searchLocation, useDeviceLocation, clearLocation } from './store.js';
+import {
+  getLocation,
+  onLocation,
+  searchLocation,
+  useDeviceLocation,
+  clearLocation,
+  setLocation,
+  savePlace,
+  removePlace,
+  setDefaultPlace,
+  onSavedPlaces,
+  placeId,
+} from './store.js';
 
 export function locationBar() {
   const input = el('input', {
@@ -92,6 +104,60 @@ export function locationBar() {
     );
   });
 
+  // Saved places. Tap the name to switch to one, the star to make it the place
+  // this page opens on, the ✕ to forget it.
+  const places = el('div', { class: 'place-pills' });
+
+  onSavedPlaces((list) => {
+    clear(places);
+    if (!list.length) return;
+    const active = getLocation();
+    mount(places,
+      el('span', { class: 'fine-print', text: 'Saved:' }),
+      list.map((p) =>
+        el(
+          'div',
+          { class: `place-pill${active && p.id === placeId(active) ? ' active' : ''}` },
+          el('button', {
+            class: `place-star${p.isDefault ? ' is-default' : ''}`,
+            type: 'button',
+            title: p.isDefault ? 'Opens here by default' : 'Make this the default location',
+            'aria-label': p.isDefault ? `${p.label} is the default location` : `Make ${p.label} the default location`,
+            'aria-pressed': String(Boolean(p.isDefault)),
+            text: p.isDefault ? '★' : '☆',
+            onClick() {
+              setDefaultPlace(p.id);
+            },
+          }),
+          el('button', {
+            class: 'place-pick',
+            type: 'button',
+            text: p.label,
+            title: `Show weather for ${p.label}`,
+            onClick() {
+              setLocation({ lat: p.lat, lon: p.lon, label: p.label, source: p.source || 'saved place' });
+            },
+          }),
+          el('button', {
+            class: 'place-del',
+            type: 'button',
+            title: `Forget ${p.label}`,
+            'aria-label': `Forget ${p.label}`,
+            text: '✕',
+            onClick() {
+              removePlace(p.id);
+            },
+          }),
+        ),
+      ),
+    );
+  });
+
+  // Anywhere the user actually lands becomes a pill, so the list builds itself.
+  onLocation((place) => {
+    if (place) savePlace(place);
+  });
+
   const alternatives = el('div', { class: 'loc-alts' });
   onLocation((place) => {
     clear(alternatives);
@@ -115,6 +181,7 @@ export function locationBar() {
     'div',
     { class: 'loc-bar' },
     form,
+    places,
     current,
     alternatives,
     message,

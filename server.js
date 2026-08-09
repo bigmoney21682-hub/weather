@@ -18,6 +18,7 @@ import { lightningFeed } from './lib/lightning.js';
 import { listStorms, getStorm } from './lib/hurricanes.js';
 import { getSurf } from './lib/surf.js';
 import { getAirQuality } from './lib/airquality.js';
+import { getOceanQuality } from './lib/oceanquality.js';
 import { cached, coords, fetchJSON, num } from './lib/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -128,13 +129,19 @@ const routes = {
   async '/api/surf'(query) {
     const { lat, lon } = coords(query);
     const miles = num(query.get('miles'), { min: 5, max: 200, fallback: 60 });
-    return getSurf(lat, lon, { radiusMiles: miles });
+    return getSurf(lat, lon, { radiusMiles: miles, snapToBeach: query.get('snap') !== '0' });
   },
 
   async '/api/air'(query) {
     const { lat, lon } = coords(query);
     const miles = num(query.get('miles'), { min: 5, max: 200, fallback: 60 });
     return getAirQuality(lat, lon, { radiusMiles: miles });
+  },
+
+  async '/api/ocean'(query) {
+    const { lat, lon } = coords(query);
+    const miles = num(query.get('miles'), { min: 5, max: 200, fallback: 60 });
+    return getOceanQuality(lat, lon, { radiusMiles: miles });
   },
 };
 

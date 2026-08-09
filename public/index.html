@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#0b0f18" />
-    <meta name="description" content="A private personal weather dashboard: hourly forecast, advisories, radar, lightning, wind, hurricanes, surf and air quality." />
+    <meta name="description" content="A private personal weather dashboard: hourly forecast, advisories, radar, lightning, wind, hurricanes, surf, air quality and ocean quality." />
     <meta name="referrer" content="no-referrer" />
     <title>Weather</title>
 
@@ -27,21 +27,18 @@
           </span>
           <div>
             <h1>Weather</h1>
-            <p>Everything I actually check, on one page.</p>
+            <p>The greatest weather app ever created in the history of weather apps!</p>
           </div>
         </div>
-        <nav class="jumps" aria-label="Jump to section">
-          <a href="#weather" data-jump="weather">Forecast</a>
-          <a href="#advisories" data-jump="advisories">Advisories</a>
-          <a href="#radar" data-jump="radar">Radar</a>
-          <a href="#lightning" data-jump="lightning">Lightning</a>
-          <a href="#wind" data-jump="wind">Wind</a>
-          <a href="#hurricanes" data-jump="hurricanes">Hurricanes</a>
-          <a href="#surf" data-jump="surf">Surf</a>
-          <a href="#air" data-jump="air">Air</a>
-        </nav>
       </div>
     </header>
+
+    <!-- The pill strip is what you actually navigate with, so it is the part
+         that sticks; the masthead above scrolls away with the page.
+         Filled by js/sections-order.js: tap to jump, press and hold to reorder. -->
+    <div class="jump-bar">
+      <nav class="jumps" id="jumps" aria-label="Jump to section"></nav>
+    </div>
 
     <main id="app"></main>
 

@@ -7,30 +7,108 @@
 import { api } from './util.js';
 
 const KEY = 'weather.location.v1';
+const SAVED_KEY = 'weather.places.v1';
 const listeners = new Set();
+const savedListeners = new Set();
 
-let current = load();
-
-function load() {
+function read(key, fallback) {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (typeof parsed?.lat === 'number' && typeof parsed?.lon === 'number') return parsed;
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
   } catch {
     /* corrupt or unavailable storage — start fresh */
+    return fallback;
   }
-  return null;
 }
 
-function persist(place) {
+function write(key, value) {
   try {
-    if (place) localStorage.setItem(KEY, JSON.stringify(place));
-    else localStorage.removeItem(KEY);
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
   } catch {
     /* private-mode storage refusal is not fatal */
   }
 }
+
+function load() {
+  const parsed = read(KEY, null);
+  if (typeof parsed?.lat === 'number' && typeof parsed?.lon === 'number') return parsed;
+  return null;
+}
+
+function persist(place) {
+  write(KEY, place);
+}
+
+/* ---------------------------------------------------------- saved places -- */
+
+// { id, lat, lon, label, source, isDefault } — the pills under the search box.
+let saved = (read(SAVED_KEY, []) || []).filter((p) => typeof p?.lat === 'number' && typeof p?.lon === 'number');
+
+/** Two searches that land within ~100 m are the same place. */
+const placeId = (place) => `${place.lat.toFixed(3)},${place.lon.toFixed(3)}`;
+
+function persistSaved() {
+  write(SAVED_KEY, saved);
+  for (const fn of savedListeners) {
+    try {
+      fn(saved);
+    } catch (err) {
+      console.error('saved-place listener failed', err);
+    }
+  }
+}
+
+export function getSavedPlaces() {
+  return saved;
+}
+
+export function onSavedPlaces(fn) {
+  savedListeners.add(fn);
+  fn(saved);
+  return () => savedListeners.delete(fn);
+}
+
+/** Remember a place as a pill. The first one saved becomes the default. */
+export function savePlace(place) {
+  if (!place) return null;
+  const id = placeId(place);
+  const existing = saved.find((p) => p.id === id);
+  if (existing) {
+    existing.label = place.label || existing.label;
+    persistSaved();
+    return existing;
+  }
+  const entry = { id, lat: place.lat, lon: place.lon, label: place.label, source: place.source || null, isDefault: !saved.length };
+  saved = [...saved, entry];
+  persistSaved();
+  return entry;
+}
+
+export function removePlace(id) {
+  const dropped = saved.find((p) => p.id === id);
+  saved = saved.filter((p) => p.id !== id);
+  // Never leave the list without a default to open on.
+  if (dropped?.isDefault && saved.length) saved[0].isDefault = true;
+  persistSaved();
+}
+
+export function setDefaultPlace(id) {
+  saved = saved.map((p) => ({ ...p, isDefault: p.id === id }));
+  persistSaved();
+}
+
+export function getDefaultPlace() {
+  return saved.find((p) => p.isDefault) || null;
+}
+
+export { placeId };
+
+// A starred place is where the page opens, every time. Without one, it picks up
+// wherever the last visit left off.
+const preferred = getDefaultPlace();
+let current = preferred ? { lat: preferred.lat, lon: preferred.lon, label: preferred.label, source: preferred.source } : load();
+if (preferred) persist(current);
 
 export function getLocation() {
   return current;

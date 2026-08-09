@@ -4,43 +4,14 @@
 import { api, el, clear, f, hour, clock, dayName } from '../util.js';
 import { createSection, bindLocation, statTile } from '../section.js';
 import { weatherIcon, windArrow, compass } from '../icons.js';
-import { searchLocation } from '../store.js';
 
 export function weatherSection() {
-  const input = el('input', {
-    type: 'search',
-    class: 'mini-input',
-    placeholder: 'ZIP, city, town or county',
-    'aria-label': 'Look up weather for another location',
-    autocomplete: 'off',
-  });
-  const go = el('button', { class: 'mini-btn', type: 'submit', text: 'Go' });
-  const form = el('form', { class: 'mini-form' }, input, go);
-
+  // No search box of its own: this card follows the location bar at the top.
   const ui = createSection({
     id: 'weather',
     title: 'Weather',
     subtitle: 'Hourly forecast',
     icon: weatherIcon('partly-cloudy'),
-    tools: form,
-  });
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const q = input.value.trim();
-    if (!q) return;
-    go.disabled = true;
-    go.textContent = '…';
-    try {
-      // Sets the shared location, so every section below follows along.
-      await searchLocation(q);
-      input.value = '';
-    } catch (err) {
-      ui.error(err.message);
-    } finally {
-      go.disabled = false;
-      go.textContent = 'Go';
-    }
   });
 
   bindLocation(ui, async (place) => {

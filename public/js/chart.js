@@ -344,11 +344,13 @@ export class TimeChart {
       }
     }
 
-    // Vertical markers, e.g. "now".
+    // Vertical markers, e.g. "now". Deliberately neutral: the marker says
+    // "you are here", it is not another reading competing with the series.
     for (const m of this.markers) {
       const x = Math.round(this.xToPx(m.x)) + 0.5;
       if (x < pl.x || x > pl.x + pl.w) continue;
-      ctx.strokeStyle = m.color || '#ffd166';
+      const markColor = resolveColor(m.color || 'var(--chart-now)');
+      ctx.strokeStyle = markColor;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -357,7 +359,7 @@ export class TimeChart {
       ctx.stroke();
       ctx.setLineDash([]);
       if (m.label) {
-        ctx.fillStyle = m.color || '#ffd166';
+        ctx.fillStyle = markColor;
         ctx.font = '10px system-ui, sans-serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
