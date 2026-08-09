@@ -22,13 +22,30 @@ npm install     # only dependency is Leaflet, vendored into public/
 npm start
 ```
 
-The server prints its URL. It takes port `8787` when free and otherwise walks up
-until it finds an open one, so it never collides with something already running.
+The server prints every URL it can be opened on. It takes port `8787` when free
+and otherwise walks up until it finds an open one, so it never collides with
+something already running.
+
+```
+  Weather  →  http://localhost:8787
+  Weather  →  http://192.168.1.2:8787     ← same Wi-Fi, e.g. your phone
+```
+
+By default it binds the wildcard address, which covers IPv4 and IPv6 loopback
+plus your LAN. That matters on macOS: `localhost` resolves to IPv6 `::1` first,
+so a server bound only to `127.0.0.1` refuses the connection.
 
 ```bash
 PORT=9000 npm start        # start looking from a different port
-HOST=0.0.0.0 npm start     # reachable from other devices on your LAN
+HOST=127.0.0.1 npm start   # this machine only, not the LAN
 npm run dev                # restart on file changes
+```
+
+If a browser cannot reach it, check the server is actually up:
+
+```bash
+lsof -nP -iTCP -sTCP:LISTEN | grep node    # what port did it take?
+curl -sI http://localhost:8787/            # expect HTTP/1.1 200
 ```
 
 Requires Node 22 or newer (it uses the built-in `fetch` and `WebSocket`).

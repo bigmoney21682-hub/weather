@@ -7,6 +7,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,7 +22,11 @@ import { cached, coords, fetchJSON, num } from './lib/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
-const HOST = process.env.HOST || '127.0.0.1';
+// Undefined means Node's wildcard address, which is dual-stack: it answers on
+// IPv4 and IPv6 loopback (macOS resolves "localhost" to ::1 first, so binding
+// 127.0.0.1 alone gets connections refused) and on the LAN, so a phone on the
+// same Wi-Fi can open it. Set HOST=127.0.0.1 to keep it to this machine only.
+const HOST = process.env.HOST || undefined;
 const BASE_PORT = Number(process.env.PORT) || 8787;
 
 const MIME = {
@@ -212,12 +217,26 @@ function listen(port, attemptsLeft = 25) {
     }
   });
   server.listen(port, HOST, () => {
-    console.log(`\n  Weather  →  http://${HOST}:${port}\n`);
-    console.log('  All location data stays in your browser. No accounts, no cookies, no logs.\n');
+    console.log('');
+    for (const url of reachableURLs(port)) console.log(`  Weather  →  ${url}`);
+    console.log('\n  All location data stays in your browser. No accounts, no cookies, no logs.\n');
     // Warm up the lightning websocket so strikes are already buffered by the
     // time the first request for them arrives.
     lightningFeed.start();
   });
+}
+
+/** Every address this server can actually be opened on, for the startup banner. */
+function reachableURLs(port) {
+  if (HOST) return [`http://${HOST}:${port}`];
+  const urls = [`http://localhost:${port}`];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      // Only IPv4 LAN addresses — those are the ones worth typing on a phone.
+      if (a.family === 'IPv4' && !a.internal) urls.push(`http://${a.address}:${port}`);
+    }
+  }
+  return urls;
 }
 
 listen(BASE_PORT);
