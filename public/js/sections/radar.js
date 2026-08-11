@@ -19,10 +19,11 @@ import { onLocation, getLocation } from '../store.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><circle cx="12" cy="12" r="9" stroke="var(--radar)" stroke-width="1.6"/><circle cx="12" cy="12" r="5.5" stroke="var(--radar)" stroke-width="1.2" opacity=".6"/><circle cx="12" cy="12" r="2" fill="var(--radar)"/><path d="M12 12 19 7" stroke="var(--radar)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 
-// Milliseconds spent crossing from one observed frame to the next.
+// Milliseconds spent crossing from one observed frame to the next. 1× is the
+// default; 0.5× is the half-speed look, so it takes twice as long per frame.
 const SPEEDS = [
   { label: '1×', ms: 1000 },
-  { label: '2×', ms: 500 },
+  { label: '0.5×', ms: 2000 },
 ];
 
 const FRAME_OPACITY = 0.78;
