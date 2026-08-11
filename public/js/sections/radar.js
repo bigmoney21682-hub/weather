@@ -65,8 +65,13 @@ export function radarSection() {
     ),
   );
 
+  const sourceNote = ui.card.querySelector('.legend-note');
+  const legendBar = ui.card.querySelector('.radar-bar');
+
   let map;
   let frames = [];
+  let tileOptions = null; // tile geometry for whichever feed is in play
+  let source = null;
   const layers = new Map(); // frame url -> tile layer, kept across refreshes
   let cursor = 0; // continuous position across `frames`
   let hold = 0; // milliseconds left of the end-of-loop pause
@@ -92,23 +97,19 @@ export function radarSection() {
   /** The layer for frame `i`, created on first use and reused thereafter. */
   function layerFor(i) {
     const frame = frames[i];
-    if (!frame || !map) return null;
+    if (!frame || !map || !tileOptions) return null;
     let layer = layers.get(frame.url);
     if (!layer) {
+      // Geometry comes from the server with the frames, because the two feeds
+      // disagree about all of it: NEXRAD is 256px tiles sharp to zoom 16, the
+      // global composite is 512px and repeats itself past zoom 8. Capping at
+      // each feed's last real zoom keeps the picture blurry rather than laid
+      // over ground it does not describe.
       layer = radarTileLayer(frame.url, {
         opacity: 0,
         zIndex: 400 + i,
         maxZoom: 19,
-        // RainViewer's composite runs out of resolution at tile zoom 8: ask for
-        // 9 or deeper and it answers with the byte-identical z8 image, which the
-        // map then stretches over a sixteenth of the area — a radar picture that
-        // no longer lines up with the coastline under it. Stop at the last real
-        // zoom and let Leaflet do the scaling, so it goes blurry rather than wrong.
-        // With tileSize 512 and zoomOffset -1 the requested zoom is one below the
-        // map's, so 9 here is tile zoom 8.
-        maxNativeZoom: 9,
-        tileSize: 512,
-        zoomOffset: -1,
+        ...tileOptions,
       }).addTo(map);
       layers.set(frame.url, layer);
     }
@@ -182,10 +183,13 @@ export function radarSection() {
     const stamp = `${shown.time}/${nextIndex == null}`;
     if (stamp !== shownStamp) {
       shownStamp = stamp;
-      timeLabel.textContent =
-        new Date(shown.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
-        (shown.nowcast ? ' (forecast)' : '');
-      timeLabel.classList.toggle('is-nowcast', Boolean(shown.nowcast));
+      // Both feeds are observed scans only — NEXRAD publishes no forecast, and
+      // RainViewer's nowcast list is always empty without an API key — so every
+      // frame here is something that actually happened.
+      timeLabel.textContent = new Date(shown.time * 1000).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
       timeLabel.title = nextIndex == null ? 'Observed radar frame' : 'Fading between the frames either side';
     }
   }
@@ -257,14 +261,22 @@ export function radarSection() {
   async function loadFrames() {
     if (!loaded) ui.loading('Fetching radar frames…');
     try {
-      const data = await api('/api/radar');
-      const build = (f, nowcast) => ({
-        time: f.time,
-        nowcast,
-        url: data.tileTemplate.replace('{host}', data.host).replace('{path}', f.path),
-      });
-      const next = [...data.past.map((f) => build(f, false)), ...data.nowcast.slice(0, 3).map((f) => build(f, true))];
+      // Which feed answers depends on where you are, so the point travels with
+      // the request and a move can swap the source underneath us.
+      const place = getLocation();
+      const data = await api('/api/radar', place ? { lat: place.lat, lon: place.lon } : {});
+      const next = data.frames || [];
       if (!next.length) throw new Error('No radar frames were returned.');
+
+      if (data.source !== source) {
+        source = data.source;
+        tileOptions = { ...data.tile, attribution: data.attribution };
+        const nexrad = data.source === 'nexrad';
+        legendBar.classList.toggle('is-nexrad', nexrad);
+        sourceNote.textContent = nexrad
+          ? `${data.label} — NWS reflectivity, sharp enough to zoom right in.`
+          : `${data.label} — colour follows rain rate; darker cores are the strongest returns.`;
+      }
 
       // The window has slid, so remember the moment the loop was showing and
       // put the cursor back on it rather than snapping to the newest frame.
@@ -272,6 +284,9 @@ export function radarSection() {
       frames = next;
 
       ensureMap();
+      // Build the incoming set before dropping anything, so whatever is on
+      // screen stays there while the replacements fetch.
+      frames.forEach((_, i) => layerFor(i));
       // Successive refreshes overlap by all but a frame or two. Dropping only
       // the frames that aged out keeps the rest of the stack — already fetched
       // and already recoloured — instead of rebuilding every layer from
@@ -285,7 +300,8 @@ export function radarSection() {
       frames.forEach((f, i) => layers.get(f.url)?.setZIndex(400 + i));
 
       scrub.max = String(Math.max(0, frames.length - 1));
-      cursor = watching == null ? Math.max(0, data.past.length - 1) : positionAt(frames, watching);
+      // Newest frame last, and there is no forecast tail on either feed.
+      cursor = watching == null ? Math.max(0, frames.length - 1) : positionAt(frames, watching);
       hold = 0;
       render(cursor);
       // The range just changed, so the cached value no longer describes the input.
@@ -307,10 +323,14 @@ export function radarSection() {
     marker = homeMarker(map, place.lat, place.lon, place.label);
     map.setView([place.lat, place.lon], Math.max(map.getZoom(), 8), { animate: false });
     ui.setSubtitle(`Last hour of precipitation near ${place.label}`);
+    // Moving can cross into or out of NEXRAD's footprint, which changes both
+    // the feed and the tile geometry, so the frames are refetched for the point.
+    loadFrames();
   });
 
   loadFrames();
-  // Frames age out every ten minutes; refresh a little more often than that.
+  // NEXRAD scans every five minutes and the global composite every ten, so this
+  // keeps up with the faster of the two.
   setInterval(loadFrames, 5 * 60 * 1000);
 
   // Stop animating when the card is off screen — it saves tiles and battery.

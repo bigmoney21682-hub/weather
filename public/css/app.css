@@ -1294,10 +1294,6 @@ main {
   min-width: 62px;
 }
 
-.frame-time.is-nowcast {
-  color: var(--gust);
-}
-
 .legend {
   display: flex;
   align-items: center;
@@ -1318,6 +1314,12 @@ main {
 /* Matches the recoloured tiles: see js/radar-tiles.js. */
 .radar-bar {
   background: linear-gradient(90deg, #9aed83, #33e42e, #0da626, #075a22, #ffe000, #ff8b00, #e02c2c, #a020c8);
+}
+
+/* The NEXRAD mosaic arrives in the NWS reflectivity ramp, which opens on cyan
+   rather than green, so the key has to follow the feed that is actually up. */
+.radar-bar.is-nexrad {
+  background: linear-gradient(90deg, #6ed6e8, #11d517, #0a9a12, #ffe000, #ff8b00, #e02c2c, #ba1c1c, #e86ce8);
 }
 
 .legend-note {

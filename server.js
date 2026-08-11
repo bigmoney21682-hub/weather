@@ -19,8 +19,9 @@ import { listStorms, getStorm } from './lib/hurricanes.js';
 import { getSurf } from './lib/surf.js';
 import { getAirQuality } from './lib/airquality.js';
 import { getOceanQuality } from './lib/oceanquality.js';
+import { getRadar } from './lib/radar.js';
 import { startKeepAlive } from './lib/keepalive.js';
-import { cached, coords, fetchJSON, num } from './lib/util.js';
+import { coords, num } from './lib/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -97,22 +98,14 @@ const routes = {
     return getAlerts(lat, lon);
   },
 
-  /** RainViewer frame index: past two hours of radar plus nowcast frames. */
-  async '/api/radar'() {
-    const data = await cached('radar:index', 60 * 1000, () =>
-      fetchJSON('https://api.rainviewer.com/public/weather-maps.json'),
-    );
-    const now = Math.floor(Date.now() / 1000);
-    const past = (data.radar?.past || []).filter((f) => f.time >= now - 3600);
-    return {
-      host: data.host,
-      generated: data.generated,
-      past,
-      nowcast: data.radar?.nowcast || [],
-      // Colour scheme 4 with smoothing reads closest to a broadcast radar.
-      tileTemplate: '{host}{path}/512/{z}/{x}/{y}/4/1_1.png',
-      attribution: 'Radar © <a href="https://www.rainviewer.com/">RainViewer</a>',
-    };
+  /**
+   * An hour of radar frames for a point: the NEXRAD mosaic where it reaches,
+   * the global composite otherwise. Without coordinates it answers globally.
+   */
+  async '/api/radar'(query) {
+    const lat = num(query.get('lat'), { min: -90, max: 90 });
+    const lon = num(query.get('lon'), { min: -180, max: 180 });
+    return getRadar(lat, lon);
   },
 
   async '/api/lightning'(query) {

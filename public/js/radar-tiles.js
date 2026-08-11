@@ -141,7 +141,10 @@ function recolouredClass() {
  * Same contract as `L.tileLayer`, but each tile is a canvas we have repainted.
  * If a tile ever fails the canvas security check we keep RainViewer's original
  * colours rather than dropping the frame.
+ *
+ * Pass `recolour: false` for a feed that already ships the palette we want — it
+ * then behaves as a plain tile layer and skips a canvas pass per tile.
  */
-export function radarTileLayer(url, options) {
-  return new (recolouredClass())(url, options);
+export function radarTileLayer(url, { recolour: shouldRecolour = true, ...options } = {}) {
+  return shouldRecolour ? new (recolouredClass())(url, options) : L.tileLayer(url, options);
 }
