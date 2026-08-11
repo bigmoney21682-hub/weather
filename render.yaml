@@ -7,7 +7,7 @@ services:
     plan: free
     buildCommand: npm ci --omit=dev
     startCommand: node server.js
-    healthCheckPath: /
+    healthCheckPath: /healthz
     envVars:
       # package.json asks for >=22; pin it so a Render default bump cannot
       # silently move the runtime under the app.

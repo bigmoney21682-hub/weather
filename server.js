@@ -19,6 +19,7 @@ import { listStorms, getStorm } from './lib/hurricanes.js';
 import { getSurf } from './lib/surf.js';
 import { getAirQuality } from './lib/airquality.js';
 import { getOceanQuality } from './lib/oceanquality.js';
+import { startKeepAlive } from './lib/keepalive.js';
 import { cached, coords, fetchJSON, num } from './lib/util.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,12 @@ function sendJSON(res, status, body) {
 /* ------------------------------------------------------------------ API ---- */
 
 const routes = {
+  // Cheap liveness probe. The host's health check and the keep-alive ping both
+  // hit this rather than '/', so neither reads index.html off disk.
+  '/healthz'() {
+    return { ok: true, uptimeSeconds: Math.round(process.uptime()) };
+  },
+
   async '/api/geocode'(query) {
     const q = query.get('q');
     if (!q) {
@@ -234,6 +241,7 @@ function listen(port, attemptsLeft = PORT_IS_FIXED ? 0 : 25) {
     // Warm up the lightning websocket so strikes are already buffered by the
     // time the first request for them arrives.
     lightningFeed.start();
+    if (startKeepAlive()) console.log('  Keep-alive pinging this service so it does not idle out.\n');
   });
 }
 

@@ -123,20 +123,52 @@ feed stays fresh, so the page can refresh often without hammering anyone.
 See [PRIVACY.md](PRIVACY.md). Short version: your location lives in this browser's
 `localStorage` and nowhere else. No accounts, no cookies, no analytics, no logs.
 
-## Deploying from GitHub
+## Deploying
 
-The app is a plain Node server, so anything that runs Node will host it:
+Live at **https://weather-oxyj.onrender.com**, running on Render from this
+repository's `main` branch. Pushing to `main` redeploys it.
 
-```bash
-git remote add origin git@github.com:<you>/weather.git
-git push -u origin main
-```
+Render reads [`render.yaml`](render.yaml), so the build and start commands live in
+the repo rather than in dashboard settings. Nothing needs configuring by hand and
+there are no secrets to set — every upstream feed is keyless.
 
-On the host: `npm ci --omit=dev && PORT=8787 HOST=0.0.0.0 node server.js`, behind
-whatever reverse proxy you like. Two things to keep in mind:
+Note that GitHub Pages cannot host this app. Pages serves static files only, and
+this is a Node server that proxies the weather APIs; the page would load with
+every section failing.
+
+Any other host that runs Node works too:
+`npm ci --omit=dev && PORT=8787 HOST=0.0.0.0 node server.js`. Three things to keep
+in mind:
 
 - The lightning feed holds an outbound WebSocket to `ws1.blitzortung.org:443`.
   Hosts that block long-lived outbound sockets will show the section as offline;
-  everything else keeps working.
+  everything else keeps working. (Render allows it.)
+- If the host sets `PORT`, the server binds exactly that port and exits if it is
+  taken, rather than walking to the next free one as it does locally — a health
+  check has no way to find a port it was not told about.
 - `.cache/` holds one derived file (the NOAA tide station list). It is safe to
   delete and is rebuilt on demand.
+
+### Staying awake on a free instance
+
+Free hosts spin an instance down once it has been idle for a while, which makes
+the next visit wait out a cold start. `lib/keepalive.js` prevents that by pinging
+`/healthz` on its own public URL on an interval. The ping has to go out to the
+public hostname and come back in, because the idle timer counts inbound requests
+through the host's router — pinging `127.0.0.1` never leaves the container and
+would reset nothing.
+
+It only runs when a public URL is advertised, so local runs are unaffected.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RENDER_EXTERNAL_URL` | set by Render | The public URL to ping. Keep-alive is off when absent. |
+| `KEEPALIVE_URL` | — | Overrides the above on hosts that do not set it. |
+| `KEEPALIVE_INTERVAL_MS` | `40000` | Time between pings. |
+
+Two caveats worth knowing. Keeping one instance awake around the clock uses about
+730 of Render's 750 free instance-hours per month, so a second always-on free
+service would exceed the allowance — raising the interval buys headroom, and
+anything under the host's idle window (15 minutes on Render) works equally well.
+And an instance that never sleeps never reloads, so a slow memory leak has more
+room to accumulate; `/healthz` reports uptime if you want to keep an eye on it.
