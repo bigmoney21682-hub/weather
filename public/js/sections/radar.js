@@ -99,6 +99,14 @@ export function radarSection() {
         opacity: 0,
         zIndex: 400 + i,
         maxZoom: 19,
+        // RainViewer's composite runs out of resolution at tile zoom 8: ask for
+        // 9 or deeper and it answers with the byte-identical z8 image, which the
+        // map then stretches over a sixteenth of the area — a radar picture that
+        // no longer lines up with the coastline under it. Stop at the last real
+        // zoom and let Leaflet do the scaling, so it goes blurry rather than wrong.
+        // With tileSize 512 and zoomOffset -1 the requested zoom is one below the
+        // map's, so 9 here is tile zoom 8.
+        maxNativeZoom: 9,
         tileSize: 512,
         zoomOffset: -1,
       }).addTo(map);
