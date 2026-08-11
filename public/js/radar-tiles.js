@@ -99,13 +99,15 @@ function recolour(data) {
 
 /* -------------------------------------------------------------- layer ----- */
 
-/**
- * Same contract as `L.tileLayer`, but each tile is a canvas we have repainted.
- * If a tile ever fails the canvas security check we keep RainViewer's original
- * colours rather than dropping the frame.
- */
-export function radarTileLayer(url, options) {
-  const Recoloured = L.TileLayer.extend({
+// Built on first use rather than at module scope: Leaflet is a deferred classic
+// script, so `L` is not guaranteed to exist while this module is evaluating.
+// Memoised because every `L.TileLayer.extend` call mints a fresh class, and a
+// frame layer is built for each of the dozen-odd frames.
+let Recoloured = null;
+
+function recolouredClass() {
+  if (Recoloured) return Recoloured;
+  Recoloured = L.TileLayer.extend({
     createTile(coords, done) {
       const size = this.getTileSize();
       const tile = L.DomUtil.create('canvas');
@@ -132,6 +134,14 @@ export function radarTileLayer(url, options) {
       return tile;
     },
   });
+  return Recoloured;
+}
 
-  return new Recoloured(url, options);
+/**
+ * Same contract as `L.tileLayer`, but each tile is a canvas we have repainted.
+ * If a tile ever fails the canvas security check we keep RainViewer's original
+ * colours rather than dropping the frame.
+ */
+export function radarTileLayer(url, options) {
+  return new (recolouredClass())(url, options);
 }
