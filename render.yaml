@@ -1,0 +1,15 @@
+# Render blueprint. Point Render at this repo and it reads this file instead of
+# asking for build and start commands.
+services:
+  - type: web
+    name: weather
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      # package.json asks for >=22; pin it so a Render default bump cannot
+      # silently move the runtime under the app.
+      - key: NODE_VERSION
+        value: "22"

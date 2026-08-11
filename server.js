@@ -28,6 +28,10 @@ const PUBLIC = path.join(ROOT, 'public');
 // 127.0.0.1 alone gets connections refused) and on the LAN, so a phone on the
 // same Wi-Fi can open it. Set HOST=127.0.0.1 to keep it to this machine only.
 const HOST = process.env.HOST || undefined;
+// A host that sets PORT is telling us the one port it will route traffic to, so
+// there is nowhere to walk if it is busy — fail loudly instead of binding a port
+// nobody is listening for.
+const PORT_IS_FIXED = Boolean(process.env.PORT);
 const BASE_PORT = Number(process.env.PORT) || 8787;
 
 const MIME = {
@@ -214,7 +218,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 /** Take BASE_PORT if it is free, otherwise walk up until something opens. */
-function listen(port, attemptsLeft = 25) {
+function listen(port, attemptsLeft = PORT_IS_FIXED ? 0 : 25) {
   server.once('error', (err) => {
     if (err.code === 'EADDRINUSE' && attemptsLeft > 0) {
       listen(port + 1, attemptsLeft - 1);
