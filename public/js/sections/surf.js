@@ -116,8 +116,12 @@ export function surfSection() {
     // The card reports on a beach, not on the town in the location bar.
     const beach = data.spot
       ? `${data.spot.name} · ${f.miles(data.spot.distanceMiles)} from ${place.label}`
-      : place.label;
+      : `Open water near ${place.label} — no named beach found`;
     ui.setSubtitle(override ? `${place.label} (spot override)` : beach);
+
+    // Everything below that needs to point at somewhere named falls back to the
+    // location bar when the beach lookup came up empty.
+    const spotName = data.spot?.name || place.label;
 
     const c = data.current || {};
     clear(stats).append(
@@ -136,14 +140,16 @@ export function surfSection() {
           { class: 'callout' },
           el('span', { class: 'callout-label', text: `Biggest wave within ${data.scanRadiusMiles} mi` }),
           el('span', { class: 'callout-value', text: f.ft(b.waveFt) }),
-          b.city ? el('span', { class: 'callout-city', text: `off ${b.city}` }) : null,
+          b.place ? el('span', { class: 'callout-city', text: `off ${b.place.name}` }) : null,
           el('span', {
             class: 'callout-note',
+            // Always says where it is relative to somewhere named, so the line
+            // reads as a place even when no beach could be matched to it.
             text:
-              b.distanceMiles < 1
-                ? 'right here at your spot'
-                : `${f.miles(b.distanceMiles)} away · ${b.lat.toFixed(2)}, ${b.lon.toFixed(2)}` +
-                  (b.periodS ? ` · ${Math.round(b.periodS)} s period` : ''),
+              (b.distanceMiles < 1
+                ? `right here at ${spotName}`
+                : `${f.miles(b.distanceMiles)} ${compass(b.bearingDeg)} of ${spotName}`) +
+              (b.periodS ? ` · ${Math.round(b.periodS)} s period` : ''),
           }),
           el('a', {
             class: 'chip link',
