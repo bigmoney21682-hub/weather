@@ -28,6 +28,10 @@ export function createSection({ id, title, subtitle, icon, tools }) {
     body,
   );
 
+  // The parts of a progress state, kept between updates so that ticking the
+  // count along does not rebuild the pill and restart its animation.
+  let bar = null;
+
   const ui = {
     card,
     body,
@@ -41,10 +45,29 @@ export function createSection({ id, title, subtitle, icon, tools }) {
       ui.subtitleEl.textContent = text || '';
     },
     loading(message = 'Loading…') {
+      bar = null;
       status.className = 'card-status loading';
       status.textContent = message;
     },
+    /**
+     * `loading` for work that arrives in pieces: the same pill, with a bar that
+     * fills as `done` climbs towards `total`. A spinner alone cannot tell a slow
+     * fetch from a stalled one, which is exactly the question a phone on a weak
+     * connection leaves you asking.
+     */
+    progress(message, done, total) {
+      if (!(total > 0)) return ui.loading(message);
+      if (!bar) {
+        status.className = 'card-status loading';
+        clear(status);
+        bar = { text: el('span'), fill: el('i') };
+        status.append(bar.text, el('div', { class: 'progress-track' }, bar.fill));
+      }
+      bar.text.textContent = message;
+      bar.fill.style.width = `${Math.round(Math.min(1, Math.max(0, done / total)) * 100)}%`;
+    },
     error(message, onRetry) {
+      bar = null;
       status.className = 'card-status error';
       clear(status);
       status.append(el('span', { text: message }));
@@ -53,10 +76,12 @@ export function createSection({ id, title, subtitle, icon, tools }) {
       }
     },
     note(message) {
+      bar = null;
       status.className = 'card-status note';
       status.textContent = message;
     },
     ready() {
+      bar = null;
       status.className = 'card-status hidden';
       status.textContent = '';
     },

@@ -40,6 +40,32 @@ const FRAME_OPACITY = 0.78;
 const END_HOLD = 900; // beat on the newest frame before cutting back to the start
 const MAX_DELTA = 200; // a backgrounded tab must not fast-forward on its way back
 
+// What to call each feed while it loads. Which one answers depends on where you
+// are, and the two are far apart in how long they take to arrive, so the wait
+// says which one it is waiting for rather than a generic "loading".
+const FEED_NAMES = {
+  nexrad: 'NEXRAD mosaic',
+  rainviewer: 'Global composite',
+};
+
+// The basemap's own limit, and what the frame layers are built with.
+const MAP_MAX_ZOOM = 19;
+
+// How far past a feed's last real zoom the map may still be taken. Leaflet will
+// upscale a tile forever, and the global composite runs out at map zoom 8 — so
+// arriving somewhere outside NEXRAD while zoomed into a US street stretched one
+// tile across five levels and painted a smear of coloured squares that reads as
+// a broken radar rather than as rain. Two levels of upscale still reads: enough
+// to put a storm against a coastline, not enough to claim detail the feed does
+// not have. NEXRAD reaches zoom 16, so this leaves it untouched.
+const ZOOM_HEADROOM = 2;
+
+// Longest we will sit on a progress bar. Every tile resolves one way or the
+// other — a failed image still calls `done` — but a map that never gets a size
+// never asks for tiles at all, and a bar that hangs forever is worse than one
+// that gives up and lets you look at whatever did arrive.
+const PROGRESS_LIMIT = 25000;
+
 export function radarSection() {
   const ui = createSection({
     id: 'radar',
@@ -96,6 +122,14 @@ export function radarSection() {
   // back to null whenever the match stops being convincing.
   let motion = null;
   let motionTimer = null;
+  // Latest-wins token. Picking a place while a load is in flight would other-
+  // wise let the older answer land last and paint the wrong part of the world.
+  let generation = 0;
+  // Whether this load is one the user is waiting on — a first load or a move —
+  // as opposed to the five-minute refresh, which must not throw a bar over a
+  // loop that is already playing perfectly well.
+  let announcing = false;
+  let progressTimer = null;
 
   function ensureMap() {
     if (map) return map;
@@ -132,9 +166,57 @@ export function radarSection() {
         ...frame.params,
         url: frame.url || tileOptions.url,
       }).addTo(map);
+      // Leaflet fires this once every tile the layer wants is painted, which is
+      // the only honest measure of "the radar is here". The frame list itself
+      // arrives in a moment; it is the tiles behind it that keep a phone
+      // waiting, and until now nothing on screen said so.
+      layer.on('load', () => {
+        layer._radarLoaded = true;
+        reportProgress();
+      });
+      layer._radarLoaded = false;
       layers.set(frame.key, layer);
     }
     return layer;
+  }
+
+  /**
+   * Hold the map to a zoom the feed in play can actually describe. Leaflet
+   * clamps `setView` and the zoom control to `maxZoom` for us, so setting it is
+   * enough to cover panning, the recenter button and pinching alike.
+   */
+  function applyZoomCeiling() {
+    if (!map) return;
+    const native = tileOptions?.maxNativeZoom;
+    const cap = native == null ? MAP_MAX_ZOOM : Math.min(MAP_MAX_ZOOM, native + ZOOM_HEADROOM);
+    map.setMaxZoom(cap);
+    // Unanimated: this is the feed changing under the view, not a gesture, and
+    // gliding out three levels reads as the map wandering off on its own.
+    if (map.getZoom() > cap) map.setZoom(cap, { animate: false });
+  }
+
+  /* ------------------------------------------------------------- progress -- */
+
+  function framesPainted() {
+    let n = 0;
+    for (const f of frames) if (layers.get(f.key)?._radarLoaded) n++;
+    return n;
+  }
+
+  function reportProgress() {
+    if (!announcing) return;
+    const total = frames.length;
+    const done = framesPainted();
+    if (!total || done >= total) return endProgress();
+    ui.progress(`Loading ${FEED_NAMES[source] || 'radar'} · ${done} of ${total} frames`, done, total);
+  }
+
+  function endProgress() {
+    if (!announcing) return;
+    announcing = false;
+    clearTimeout(progressTimer);
+    progressTimer = null;
+    ui.ready();
   }
 
   /* -------------------------------------------------------------- motion -- */
@@ -358,13 +440,27 @@ export function radarSection() {
     if (place && map) map.setView([place.lat, place.lon], Math.max(map.getZoom(), 8), { animate: true });
   });
 
-  async function loadFrames() {
-    if (!loaded) ui.loading('Fetching radar frames…');
+  /**
+   * @param {boolean} announce Whether to show the wait. True for the loads a
+   *   user is sitting through — the first one, and every move — and false for
+   *   the background refresh, which replaces frames under a running loop.
+   */
+  async function loadFrames(announce = true) {
+    const mine = ++generation;
+    if (announce) {
+      announcing = true;
+      // Named for the feed as soon as we know which one it is; until the
+      // response lands we do not, because coverage decides it.
+      ui.loading('Fetching radar frames…');
+      clearTimeout(progressTimer);
+      progressTimer = setTimeout(endProgress, PROGRESS_LIMIT);
+    }
     try {
       // Which feed answers depends on where you are, so the point travels with
       // the request and a move can swap the source underneath us.
       const place = getLocation();
       const data = await api('/api/radar', place ? { lat: place.lat, lon: place.lon } : {});
+      if (mine !== generation) return; // a newer place is already loading
       const next = data.frames || [];
       if (!next.length) throw new Error('No radar frames were returned.');
 
@@ -375,7 +471,7 @@ export function radarSection() {
         sourceNote.textContent =
           data.source === 'nexrad'
             ? `${data.label} — sharp enough to zoom right in; colour follows rain rate.`
-            : `${data.label} — colour follows rain rate; darker cores are the strongest returns.`;
+            : `${data.label} — broad strokes, so it stops short of street level; colour follows rain rate.`;
       }
 
       // The window has slid, so remember the moment the loop was showing and
@@ -384,6 +480,10 @@ export function radarSection() {
       frames = next;
 
       ensureMap();
+      // Before the layers are built, so a view left too deep by the place we
+      // came from is pulled back in first and the frames fetch the tiles they
+      // will actually be shown at rather than a row that is discarded.
+      applyZoomCeiling();
       // Build the incoming set before dropping anything, so whatever is on
       // screen stays there while the replacements fetch.
       frames.forEach((_, i) => layerFor(i));
@@ -409,14 +509,35 @@ export function radarSection() {
       syncScrub(cursor);
 
       loaded = true;
-      ui.ready();
+      // Not `ready` yet when the user is waiting on this one: the frames are
+      // only the addresses of the pictures. Hold the pill until the tiles
+      // themselves have painted, counting them off as they land — that is the
+      // difference between "this is slow" and "this is broken", and on the
+      // global composite the gap between the two is seconds of blank map.
+      if (announcing) {
+        // A frame the loop already had keeps its layer, but a move means new
+        // ground under it and so new tiles. Un-count only the layers Leaflet
+        // has actually put back to work: if nothing is fetching then what is on
+        // screen already is the answer, and the wait is over before it starts.
+        for (const f of frames) {
+          const layer = layers.get(f.key);
+          if (layer?._loading) layer._radarLoaded = false;
+        }
+        reportProgress();
+      } else {
+        ui.ready();
+      }
       // The window has slid, so the drift is worth re-reading — but not until
       // the newest frame has had a chance to paint.
       motionTries = 0;
       scheduleMotion(2500);
       if (playing && visible) start();
     } catch (err) {
-      ui.error(`Radar unavailable: ${err.message}`, loadFrames);
+      if (mine !== generation) return;
+      announcing = false;
+      clearTimeout(progressTimer);
+      progressTimer = null;
+      ui.error(`Radar unavailable: ${err.message}`, () => loadFrames());
     }
   }
 
@@ -434,8 +555,9 @@ export function radarSection() {
 
   loadFrames();
   // NEXRAD scans every five minutes and the global composite every ten, so this
-  // keeps up with the faster of the two.
-  setInterval(loadFrames, 5 * 60 * 1000);
+  // keeps up with the faster of the two. Silent: the loop on screen stays
+  // watchable while its replacement frames fetch behind it.
+  setInterval(() => loadFrames(false), 5 * 60 * 1000);
 
   // Stop animating when the card is off screen — it saves tiles and battery.
   const io = new IntersectionObserver(

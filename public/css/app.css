@@ -410,6 +410,25 @@ main {
   }
 }
 
+/* The filling bar of a `progress` status. It sits under the label rather than
+   beside it so the label can stay a full sentence on a narrow phone. */
+.progress-track {
+  margin-top: 7px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.progress-track > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--card-accent);
+  transition: width 0.25s var(--ease);
+}
+
 .card-status.error {
   color: #ffc3cd;
   background: rgba(255, 90, 120, 0.1);
@@ -2153,6 +2172,10 @@ main > :nth-child(n + 6) { animation-delay: 0.2s; }
   .card-status.loading,
   .oq-badge {
     background-color: rgba(16, 24, 40, 0.03);
+  }
+
+  .progress-track {
+    background: rgba(16, 24, 40, 0.12);
   }
 
   .loc-input,
