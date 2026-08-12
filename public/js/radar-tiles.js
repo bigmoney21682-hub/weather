@@ -342,6 +342,10 @@ function paintNexrad(data, w, h) {
 // implementation for both feeds, and it is already clutter-filtered.
 export const SIGNATURE_GRID = 32;
 
+// Tile signatures kept per frame. A screenful is a handful, so this is room for
+// a good deal of panning and several zoom levels before anything is dropped.
+const MAX_SIGNATURES = 96;
+
 function signatureOf(data, w, h) {
   const g = SIGNATURE_GRID;
   const sig = new Float32Array(g * g);
@@ -378,6 +382,32 @@ const PAINTERS = {
 // frame layer is built for each of the dozen-odd frames.
 const painted = new Map();
 
+/**
+ * Stop a tile that is no longer wanted from finishing.
+ *
+ * Leaflet's own abort path assumes the tile element is an `<img>`: it clears
+ * `onload` on the element and blanks its `src`. Ours is a canvas with the real
+ * image hidden inside the closure, so none of that reached the download — the
+ * tile was pulled out of the DOM and then went on to decode, repaint and reduce
+ * a quarter of a million pixels for a picture nobody would ever see.
+ *
+ * That is what made zooming expensive. Every level a pinch passes through
+ * queues a full paint for each of the dozen frame layers, and none of them
+ * could be called off; on a phone the main thread stalls long enough for the
+ * browser to give up on the page and reload it.
+ */
+function abandonTile(el) {
+  const img = el?._radarImage;
+  if (!img) return;
+  el._radarAbandoned = true;
+  img.onload = null;
+  img.onerror = null;
+  // Pointing the request at nothing is what actually cancels an image fetch
+  // that is already in flight.
+  img.src = '';
+  el._radarImage = null;
+}
+
 function paintedClass(Base) {
   let cls = painted.get(Base);
   if (cls) return cls;
@@ -390,23 +420,51 @@ function paintedClass(Base) {
 
       const img = new Image();
       img.crossOrigin = 'anonymous';
+      tile._radarImage = img;
       img.onload = () => {
+        // Abandoned between the request going out and the bytes arriving.
+        if (tile._radarAbandoned) return;
+        tile._radarImage = null;
         const ctx = tile.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(img, 0, 0, size.x, size.y);
         try {
           const pixels = ctx.getImageData(0, 0, size.x, size.y);
           this._paintTile(pixels.data, size.x, size.y);
           ctx.putImageData(pixels, 0, 0);
-          this._signatures.set(`${coords.z}/${coords.x}/${coords.y}`, signatureOf(pixels.data, size.x, size.y));
+          this._rememberSignature(
+            `${coords.z}/${coords.x}/${coords.y}`,
+            signatureOf(pixels.data, size.x, size.y),
+          );
         } catch {
           /* tainted canvas — the untouched tile is still readable */
         }
         done(null, tile);
       };
       // A missing tile leaves an empty canvas, which keeps the loop running.
-      img.onerror = () => done(null, tile);
+      img.onerror = () => {
+        if (tile._radarAbandoned) return;
+        tile._radarImage = null;
+        done(null, tile);
+      };
       img.src = this.getTileUrl(coords);
       return tile;
+    },
+
+    // Leaving a zoom level behind. Leaflet drops these tiles itself, straight
+    // out of `_tiles` rather than through `_removeTile`, so this is the only
+    // place their downloads can be called off.
+    _abortLoading() {
+      for (const key of Object.keys(this._tiles)) {
+        const record = this._tiles[key];
+        if (record && record.coords.z !== this._tileZoom && !record.loaded) abandonTile(record.el);
+      }
+      Base.prototype._abortLoading.call(this);
+    },
+
+    // Panning, or pruning the buffer ring.
+    _removeTile(key) {
+      abandonTile(this._tiles[key]?.el);
+      Base.prototype._removeTile.call(this, key);
     },
   });
   painted.set(Base, cls);
@@ -432,6 +490,17 @@ export function radarTileLayer({ url, paint, wms, ...options } = {}) {
   // Keyed by tile coordinate, and deliberately kept when Leaflet prunes the
   // tile itself: a frame's content at a given coordinate never changes, so a
   // signature stays true and panning back does not have to re-earn it.
+  //
+  // Bounded, though. Every zoom level and every pan writes its own keys, and a
+  // session that roams around would otherwise hold every tile it had ever seen
+  // across all dozen frames. Oldest out first: the motion estimate only ever
+  // reads the tiles currently on screen.
   layer._signatures = new Map();
+  layer._rememberSignature = (key, signature) => {
+    const kept = layer._signatures;
+    kept.delete(key); // re-insert so a tile still in view counts as recent
+    kept.set(key, signature);
+    while (kept.size > MAX_SIGNATURES) kept.delete(kept.keys().next().value);
+  };
   return layer;
 }

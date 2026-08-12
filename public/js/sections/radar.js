@@ -160,6 +160,15 @@ export function radarSection() {
         opacity: 0,
         zIndex: 400 + i,
         maxZoom: 19,
+        // A pinch crosses several zoom levels on its way to the one you meant.
+        // Asking for tiles at each of them means a dozen frames' worth of
+        // painting per level, all of it thrown away as the gesture continues —
+        // so wait for the gesture to finish and fetch the level you landed on.
+        updateWhenZooming: false,
+        updateWhenIdle: true,
+        // The ring of off-screen tiles Leaflet keeps ready costs whatever one
+        // frame costs, times twelve here. One row is enough to pan into.
+        keepBuffer: 1,
         ...tileOptions,
         // Whatever makes this frame its own: its own address for a feed that
         // publishes one per scan, the scan time for one that does not.
