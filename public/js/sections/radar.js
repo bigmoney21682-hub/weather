@@ -1,15 +1,17 @@
 // Animated precipitation radar.
 //
-// RainViewer publishes a global composite every ten minutes. We load the last
-// hour of frames as stacked tile layers and cross-fade between them, which is
-// far smoother than swapping a single layer's URL because every frame is
-// already in the tile cache by the time it is shown.
+// The last hour of scans is loaded as a stack of tile layers which are then
+// shown in turn, which is far smoother than swapping a single layer's URL
+// because every frame is already in the tile cache by the time it is shown.
 //
-// The fade is driven by requestAnimationFrame over a continuous cursor rather
-// than by a timer stepping through a handful of fixed blends. With frames ten
-// minutes apart there is only ever room for one intermediate blend per gap, and
-// a lone 50/50 step reads as the picture stalling in place and then jumping —
-// a smooth ramp reads as one steady dissolve.
+// Each frame is *held*, then dissolved quickly into the next, rather than being
+// ramped across the whole gap. Two scans five minutes apart are about four
+// kilometres apart on the ground — seven screen pixels at the zoom this map
+// opens at, thirty by the time you have zoomed in — and dissolving slowly
+// between two copies that far apart never reads as movement. You see the old
+// one fade where it stands while a second one appears alongside it: a shadow,
+// not a storm. A near-clean cut leaves the eye to do what it does with a
+// flipbook, and the short dissolve only takes the hard edge off the switch.
 
 import { api, el, clear } from '../util.js';
 import { createSection } from '../section.js';
@@ -19,12 +21,19 @@ import { onLocation, getLocation } from '../store.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><circle cx="12" cy="12" r="9" stroke="var(--radar)" stroke-width="1.6"/><circle cx="12" cy="12" r="5.5" stroke="var(--radar)" stroke-width="1.2" opacity=".6"/><circle cx="12" cy="12" r="2" fill="var(--radar)"/><path d="M12 12 19 7" stroke="var(--radar)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 
-// Milliseconds spent crossing from one observed frame to the next. 1× is the
-// default; 0.5× is the half-speed look, so it takes twice as long per frame.
+// Milliseconds a frame owns before the next one takes over. 1× is the default;
+// 0.5× is the half-speed look, so it takes twice as long per frame. A radar
+// loop wants to run at somewhere near two frames a second — much slower and
+// each frame is read as its own picture rather than as one step of a movement.
 const SPEEDS = [
-  { label: '1×', ms: 1000 },
-  { label: '0.5×', ms: 2000 },
+  { label: '1×', ms: 620 },
+  { label: '0.5×', ms: 1240 },
 ];
+
+// How much of a frame's slot it is held still for; the rest is the dissolve
+// into the next frame. Long enough that the eye settles on one picture, short
+// enough that two offset copies are never both on screen for any length of time.
+const HOLD = 0.76;
 
 const FRAME_OPACITY = 0.78;
 const END_HOLD = 900; // beat on the newest frame before cutting back to the start
@@ -66,13 +75,12 @@ export function radarSection() {
   );
 
   const sourceNote = ui.card.querySelector('.legend-note');
-  const legendBar = ui.card.querySelector('.radar-bar');
 
   let map;
   let frames = [];
   let tileOptions = null; // tile geometry for whichever feed is in play
   let source = null;
-  const layers = new Map(); // frame url -> tile layer, kept across refreshes
+  const layers = new Map(); // frame key -> tile layer, kept across refreshes
   let cursor = 0; // continuous position across `frames`
   let hold = 0; // milliseconds left of the end-of-loop pause
   let raf = null;
@@ -98,20 +106,24 @@ export function radarSection() {
   function layerFor(i) {
     const frame = frames[i];
     if (!frame || !map || !tileOptions) return null;
-    let layer = layers.get(frame.url);
+    let layer = layers.get(frame.key);
     if (!layer) {
       // Geometry comes from the server with the frames, because the two feeds
-      // disagree about all of it: NEXRAD is 256px tiles sharp to zoom 16, the
-      // global composite is 512px and repeats itself past zoom 8. Capping at
-      // each feed's last real zoom keeps the picture blurry rather than laid
-      // over ground it does not describe.
-      layer = radarTileLayer(frame.url, {
+      // disagree about all of it: NEXRAD is 256px tiles sharp to zoom 16 asked
+      // for one scan at a time, the global composite is 512px tiles that run
+      // out at zoom 7. Capping at each feed's last real zoom keeps the picture
+      // blurry rather than laid over ground it does not describe.
+      layer = radarTileLayer({
         opacity: 0,
         zIndex: 400 + i,
         maxZoom: 19,
         ...tileOptions,
+        // Whatever makes this frame its own: its own address for a feed that
+        // publishes one per scan, the scan time for one that does not.
+        ...frame.params,
+        url: frame.url || tileOptions.url,
       }).addTo(map);
-      layers.set(frame.url, layer);
+      layers.set(frame.key, layer);
     }
     return layer;
   }
@@ -154,7 +166,9 @@ export function radarSection() {
   function render(pos) {
     if (!frames.length) return;
     const i = Math.min(Math.max(0, Math.floor(pos)), frames.length - 1);
-    const blend = Math.min(1, Math.max(0, pos - i));
+    const through = Math.min(1, Math.max(0, pos - i));
+    // Still for the first HOLD of the slot, then across in what is left.
+    const blend = through <= HOLD ? 0 : (through - HOLD) / (1 - HOLD);
     const nextIndex = blend > 0 && i + 1 < frames.length ? i + 1 : null;
 
     const from = layerFor(i);
@@ -164,9 +178,15 @@ export function radarSection() {
     layerFor(Math.min(i + 2, frames.length - 1));
 
     // Two stacked translucent layers would wash out where they overlap, so the
-    // upper one is boosted to land the composite back on FRAME_OPACITY.
-    const fromOpacity = FRAME_OPACITY * (1 - blend);
-    const toOpacity = to ? (FRAME_OPACITY - fromOpacity) / (1 - fromOpacity) : 0;
+    // lower one is boosted to land the composite back on FRAME_OPACITY.
+    //
+    // Which one is lower matters, and it is `to`: layers are stacked by frame
+    // index, so the incoming frame sits *above* the outgoing one. Solving for
+    // `from` — as though it were on top — makes the curve badly lopsided, with
+    // the incoming frame taking a third of the picture a tenth of the way in
+    // and four fifths of it by halfway. That is the snap-then-sit the loop had.
+    const toOpacity = to ? FRAME_OPACITY * blend : 0;
+    const fromOpacity = to ? (FRAME_OPACITY * (1 - blend)) / (1 - toOpacity) : FRAME_OPACITY;
     // Leaflet's setOpacity walks every tile in the layer, so at 60fps the nine
     // or so layers that are already hidden would cost more style writes than
     // the two that are actually moving. Only write when the value changes.
@@ -271,11 +291,10 @@ export function radarSection() {
       if (data.source !== source) {
         source = data.source;
         tileOptions = { ...data.tile, attribution: data.attribution };
-        const nexrad = data.source === 'nexrad';
-        legendBar.classList.toggle('is-nexrad', nexrad);
-        sourceNote.textContent = nexrad
-          ? `${data.label} — NWS reflectivity, sharp enough to zoom right in.`
-          : `${data.label} — colour follows rain rate; darker cores are the strongest returns.`;
+        sourceNote.textContent =
+          data.source === 'nexrad'
+            ? `${data.label} — sharp enough to zoom right in; colour follows rain rate.`
+            : `${data.label} — colour follows rain rate; darker cores are the strongest returns.`;
       }
 
       // The window has slid, so remember the moment the loop was showing and
@@ -291,13 +310,13 @@ export function radarSection() {
       // the frames that aged out keeps the rest of the stack — already fetched
       // and already recoloured — instead of rebuilding every layer from
       // scratch and stalling the loop while the tiles come back.
-      const live = new Set(frames.map((f) => f.url));
-      for (const [url, layer] of layers) {
-        if (live.has(url)) continue;
+      const live = new Set(frames.map((f) => f.key));
+      for (const [key, layer] of layers) {
+        if (live.has(key)) continue;
         map.removeLayer(layer);
-        layers.delete(url);
+        layers.delete(key);
       }
-      frames.forEach((f, i) => layers.get(f.url)?.setZIndex(400 + i));
+      frames.forEach((f, i) => layers.get(f.key)?.setZIndex(400 + i));
 
       scrub.max = String(Math.max(0, frames.length - 1));
       // Newest frame last, and there is no forecast tail on either feed.
