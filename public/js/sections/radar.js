@@ -16,7 +16,8 @@
 import { api, el, clear } from '../util.js';
 import { createSection } from '../section.js';
 import { createMap, homeMarker, observeSize } from '../map.js';
-import { radarTileLayer } from '../radar-tiles.js';
+import { radarTileLayer, SIGNATURE_GRID } from '../radar-tiles.js';
+import { estimateShift } from '../radar-motion.js';
 import { onLocation, getLocation } from '../store.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><circle cx="12" cy="12" r="9" stroke="var(--radar)" stroke-width="1.6"/><circle cx="12" cy="12" r="5.5" stroke="var(--radar)" stroke-width="1.2" opacity=".6"/><circle cx="12" cy="12" r="2" fill="var(--radar)"/><path d="M12 12 19 7" stroke="var(--radar)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
@@ -90,6 +91,11 @@ export function radarSection() {
   let visible = true;
   let loaded = false;
   let marker = null;
+  // Tile-grid cells per second, and the tile zoom they were measured at. Null
+  // until enough of the oldest and newest frames have painted to correlate, and
+  // back to null whenever the match stops being convincing.
+  let motion = null;
+  let motionTimer = null;
 
   function ensureMap() {
     if (map) return map;
@@ -99,6 +105,9 @@ export function radarSection() {
       zoom: place ? 8 : 4,
     });
     observeSize(map, mapEl);
+    // Panning brings different ground into view and zooming changes the tile
+    // grid the drift was measured on, so both are worth re-reading.
+    map.on('zoomend moveend', () => scheduleMotion(1200));
     return map;
   }
 
@@ -126,6 +135,49 @@ export function radarSection() {
       layers.set(frame.key, layer);
     }
     return layer;
+  }
+
+  /* -------------------------------------------------------------- motion -- */
+
+  let motionTries = 0;
+
+  function scheduleMotion(delay = 1500) {
+    if (motionTimer != null) clearTimeout(motionTimer);
+    motionTimer = setTimeout(measureMotion, delay);
+  }
+
+  /**
+   * Measure the drift across the whole hour and divide it down to a rate. See
+   * radar-motion.js for why it cannot be measured over a single gap.
+   */
+  function measureMotion() {
+    motionTimer = null;
+    if (!map || frames.length < 2) return;
+    const first = layers.get(frames[0].key);
+    const last = layers.get(frames[frames.length - 1].key);
+    const span = frames[frames.length - 1].time - frames[0].time;
+    if (!first || !last || span <= 0) return;
+    // Tiles paint asynchronously, so early on there may be nothing to compare
+    // yet. That is worth coming back for — a weak correlation is not.
+    if (!first._signatures.size || !last._signatures.size) {
+      if (motionTries++ < 6) scheduleMotion(4000);
+      return;
+    }
+    const shift = estimateShift(first, last);
+    motion = shift ? { x: shift.dx / span, y: shift.dy / span, z: shift.z } : null;
+  }
+
+  /** Slide a whole frame layer across the map, in screen pixels. */
+  function shiftLayer(layer, x, y) {
+    const node = layer?.getContainer?.();
+    if (!node) return;
+    // Leaflet 1.9.4 gives a GridLayer's container only `zIndex` and `opacity` —
+    // pan and zoom are transforms on the level elements inside it — so the
+    // container's own transform is ours to use and nothing will fight us for it.
+    const next = x || y ? `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)` : '';
+    if (node._wxShift === next) return;
+    node._wxShift = next;
+    node.style.transform = next;
   }
 
   /* --------------------------------------------------------- cursor maths -- */
@@ -187,14 +239,42 @@ export function radarSection() {
     // and four fifths of it by halfway. That is the snap-then-sit the loop had.
     const toOpacity = to ? FRAME_OPACITY * blend : 0;
     const fromOpacity = to ? (FRAME_OPACITY * (1 - blend)) / (1 - toOpacity) : FRAME_OPACITY;
+
+    // Carry the frames along their own motion, so the picture moves throughout
+    // the slot rather than only during the dissolve, and so the two copies are
+    // on top of each other by the time they cross-fade instead of side by side.
+    // The outgoing frame is run forward from where it was observed; the
+    // incoming one is wound back to meet it and arrives home as it takes over.
+    let fx = 0;
+    let fy = 0;
+    let tx = 0;
+    let ty = 0;
+    const gap = frames[i + 1] ? frames[i + 1].time - frames[i].time : 0;
+    if (motion && gap > 0) {
+      // Cells are tile-grid cells at the zoom they were measured at, so they
+      // scale with the map — which is right: a storm covers four times as many
+      // screen pixels a minute two zoom levels in.
+      const cell = ((tileOptions?.tileSize || 256) / SIGNATURE_GRID) * 2 ** (map.getZoom() - motion.z);
+      const dx = motion.x * gap * cell;
+      const dy = motion.y * gap * cell;
+      fx = dx * through;
+      fy = dy * through;
+      tx = -dx * (1 - through);
+      ty = -dy * (1 - through);
+    }
+
     // Leaflet's setOpacity walks every tile in the layer, so at 60fps the nine
     // or so layers that are already hidden would cost more style writes than
     // the two that are actually moving. Only write when the value changes.
     for (const layer of layers.values()) {
       const want = layer === from ? fromOpacity : layer === to ? toOpacity : 0;
-      if (layer._wxOpacity === want) continue;
-      layer._wxOpacity = want;
-      layer.setOpacity(want);
+      if (layer._wxOpacity !== want) {
+        layer._wxOpacity = want;
+        layer.setOpacity(want);
+      }
+      if (layer === from) shiftLayer(layer, fx, fy);
+      else if (layer === to) shiftLayer(layer, tx, ty);
+      else shiftLayer(layer, 0, 0);
     }
 
     // The clock only moves every few hundred frames, and formatting a date is
@@ -291,6 +371,7 @@ export function radarSection() {
       if (data.source !== source) {
         source = data.source;
         tileOptions = { ...data.tile, attribution: data.attribution };
+        motion = null; // different feed, different tile grid
         sourceNote.textContent =
           data.source === 'nexrad'
             ? `${data.label} — sharp enough to zoom right in; colour follows rain rate.`
@@ -329,6 +410,10 @@ export function radarSection() {
 
       loaded = true;
       ui.ready();
+      // The window has slid, so the drift is worth re-reading — but not until
+      // the newest frame has had a chance to paint.
+      motionTries = 0;
+      scheduleMotion(2500);
       if (playing && visible) start();
     } catch (err) {
       ui.error(`Radar unavailable: ${err.message}`, loadFrames);

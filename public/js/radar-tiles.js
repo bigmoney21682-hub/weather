@@ -333,6 +333,38 @@ function paintNexrad(data, w, h) {
   }
 }
 
+/* ---------------------------------------------------------- signatures ----- */
+
+// Every painted tile is also reduced to a coarse grid of "how much rain is in
+// this cell", which is what the loop cross-correlates between the oldest and
+// newest frames to work out which way the weather is travelling. Reading it off
+// the painted alpha rather than out of either painter means it is one
+// implementation for both feeds, and it is already clutter-filtered.
+export const SIGNATURE_GRID = 32;
+
+function signatureOf(data, w, h) {
+  const g = SIGNATURE_GRID;
+  const sig = new Float32Array(g * g);
+  for (let cy = 0; cy < g; cy++) {
+    const y0 = Math.floor((cy * h) / g);
+    const y1 = Math.floor(((cy + 1) * h) / g);
+    for (let cx = 0; cx < g; cx++) {
+      const x0 = Math.floor((cx * w) / g);
+      const x1 = Math.floor(((cx + 1) * w) / g);
+      let sum = 0;
+      let n = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          sum += data[(y * w + x) * 4 + 3];
+          n++;
+        }
+      }
+      sig[cy * g + cx] = n ? sum / (n * 255) : 0;
+    }
+  }
+  return sig;
+}
+
 /* -------------------------------------------------------------- layer ----- */
 
 const PAINTERS = {
@@ -365,6 +397,7 @@ function paintedClass(Base) {
           const pixels = ctx.getImageData(0, 0, size.x, size.y);
           this._paintTile(pixels.data, size.x, size.y);
           ctx.putImageData(pixels, 0, 0);
+          this._signatures.set(`${coords.z}/${coords.x}/${coords.y}`, signatureOf(pixels.data, size.x, size.y));
         } catch {
           /* tainted canvas — the untouched tile is still readable */
         }
@@ -396,5 +429,9 @@ export function radarTileLayer({ url, paint, wms, ...options } = {}) {
   const paintTile = PAINTERS[paint];
   const layer = new (paintTile ? paintedClass(Base) : Base)(url, options);
   layer._paintTile = paintTile;
+  // Keyed by tile coordinate, and deliberately kept when Leaflet prunes the
+  // tile itself: a frame's content at a given coordinate never changes, so a
+  // signature stays true and panning back does not have to re-earn it.
+  layer._signatures = new Map();
   return layer;
 }

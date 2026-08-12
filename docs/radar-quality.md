@@ -297,30 +297,72 @@ pass over live tiles, as total alpha laid down per tile:
 
 The clutter loses roughly twice what the weather does.
 
-### Still open: real interpolation
+### Interpolation — built (`public/js/radar-motion.js`)
 
-Held frames plus a short dissolve gets the shadow out and reads as motion, but
-the loop is still twelve discrete steps. Genuinely continuous motion needs the
-frames advected — shifted toward each other during the blend by the storm's own
-motion vector — so the two copies coincide instead of merely alternating.
+Held frames plus a short dissolve gets the shadow out, but the loop was still
+twelve discrete steps. It now carries each frame along the weather's own motion,
+so the picture moves continuously through the slot and the two copies are
+already on top of each other by the time they cross-fade.
 
-That vector is measurable, but **not over a 5-minute baseline**: at the tile
-resolutions involved the displacement is sub-pixel and the correlation surface
-is flat (best shift 0–1 px, gain ≤0.005). Over a **55-minute** baseline it comes
-out cleanly and plausibly:
+The vector is measured across the **whole hour** and divided down. That is not
+an optimisation, it is the only thing that works — over a single five-minute gap
+the displacement is sub-pixel and the correlation surface is flat (best shift
+0–1 px, gain ≤0.005). Over a 55-minute baseline it resolves cleanly:
 
-| Region | Shift | Implied motion | Correlation gain |
-| --- | --- | --- | --- |
-| Upper Midwest | (12, 4) px | 52 km/h ESE | 0.091 |
-| Plains | (6, 2) px | 28 km/h ESE | 0.025 |
-| Orlando | (13, 19) px | 19 km/h — but r=0.33, don't trust it | 0.109 |
+| Region | Shift | Implied motion | no-shift r | peak r |
+| --- | --- | --- | --- | --- |
+| Upper Midwest | (12, 4) px | 52 km/h ESE | 0.340 | 0.432 |
+| Plains | (6, 2) px | 28 km/h ESE | 0.520 | 0.545 |
+| Orlando (clear-air) | (13, 19) px | 19 km/h — **junk** | 0.225 | 0.333 |
 
-So the approach is: correlate the oldest frame against the newest, divide by the
-number of gaps, and apply it as a CSS transform on each frame layer's container
-during the dissolve. Leaflet 1.9.4's `GridLayer._container` only ever receives
-`zIndex` and `opacity`, so a transform there is ours to own. Not built — it is a
-real piece of work and a bad vector would slide the whole field the wrong way,
-which is worse than the shadow.
+**The acceptance test is peak correlation, not improvement over sitting still.**
+The Orlando clear-air layer had the *largest* improvement of anything measured
+(0.109, against 0.091 and 0.025 for real rain) while being the one case that has
+to be thrown away. Its peak was only 0.333. So `MIN_PEAK = 0.4` carries the
+decision and the gain is only asked to be non-trivial. Getting this backwards
+was the first implementation's bug and it was caught by unit test, not by eye.
+
+Each frame stores a coarse signature per tile — a 32×32 grid of mean painted
+alpha, taken off the alpha channel after painting so it is one implementation
+for both feeds and already clutter-filtered. Correlation runs over the tiles the
+oldest and newest frames have in common, with sub-cell refinement by parabolic
+fit on the peak. It returns null freely: too little overlap, too little echo, a
+weak peak, or a peak against the edge of the search all mean no advection, which
+is where the loop started. A wrong vector is worse than no vector.
+
+Applied as a CSS transform on each frame layer's container. Leaflet 1.9.4 gives
+a `GridLayer._container` only `zIndex` and `opacity` — pan and zoom are
+transforms on the *level* elements inside it — so that transform is ours to own.
+
+Verified three independent ways, all agreeing:
+
+| Route | Result |
+| --- | --- |
+| Synthetic fields at known offsets | recovered to <0.12 cells, incl. sub-cell (2.5, 4.5) → (2.58, 4.42) |
+| Live NEXRAD through the real paint pass | 58 km/h toward 111° |
+| Layer transforms read out of the running DOM | 57 km/h ESE, linear ramp across the slot |
+
+against 52 km/h ESE from the original independent probe of the same region.
+
+### A metadata timeout was silently demoting every US user
+
+Found while testing the above and fixed in the same change. `newestScanMs()`
+reads IEM's `/json/radar` scan clock. That call **throwing** — as opposed to
+returning something unparseable — propagated out through `nexradRadar()` to
+`getRadar()`, whose `catch` reads any failure as "the mosaic is down" and falls
+back to RainViewer. So a slow *metadata* endpoint dropped the user to the
+10-minute global composite, blurry and five zoom levels shallower, while the
+tile service was answering fine.
+
+Observed live, which is how it was found: the JSON endpoint timing out at 15s
+while a WMS tile returned 200 in 0.69s, and the app serving `rainviewer` for
+Des Moines — which is nowhere near the edge of NEXRAD coverage.
+
+The wall-clock fallback the function already had was unreachable on that path.
+It is now reached, and it lands one five-minute step *behind* the current mark:
+`nearestValue="0"` means asking for a scan that has not been composited yet
+returns a blank rather than the nearest one. Verified the three newest frames
+under the fallback all return 68–73 KB of real radar.
 
 ## Plan
 
@@ -337,11 +379,38 @@ Ordered by impact on the three goals.
 | 6 | Move the repaint to an `OffscreenCanvas` in a worker | Load time | Not needed on the measurements above; don't build it without a profile |
 | 8 | Solve the dissolve for the lower layer, and hold each frame instead of ramping across the gap | Shadows/jerk | **Done** — see [the shadow, properly diagnosed](#the-shadow-properly-diagnosed-2026-08-12) |
 | 9 | Raise the clutter floor to cut the night-time clear-air layer | Noise, jerk | **Done** — 15 dBZ hard cut, fading in to 25 |
-| 10 | Advect the frames during the dissolve by a long-baseline motion vector | Genuinely continuous motion | Open, and the only lever left on smoothness |
+| 10 | Advect the frames by a long-baseline motion vector | Genuinely continuous motion | **Done** — `public/js/radar-motion.js` |
+| 11 | Stop a scan-clock timeout demoting NEXRAD to RainViewer | Quality | **Done** — see above |
+| 12 | Move to NCEP raw MRMS for 2-minute frames | Cadence, latency | Open. Researched in full, not built — see below |
 
 Next: **#3**, then re-measure load time. #5 is cheap and worth doing alongside
-it. #10 is the one that would make the loop properly continuous rather than
-merely un-jerky.
+it.
+
+## The 2-minute option, researched and not built
+
+Joe asked for 1-minute frames. **Not possible on this feed**: GetCapabilities
+declares `PT5M` with `nearestValue="0"`, and off-grid minutes return a
+byte-identical 1096-byte blank (only :50, :55 and :00 returned radar; the eight
+minutes between them all hashed to `7ee0240f`). It would strobe, not play.
+
+Surveyed the keyless alternatives:
+
+| Source | Cadence | Latency | Resolution | Verdict |
+| --- | --- | --- | --- | --- |
+| IEM N0Q (current) | 5 min | ~1 min | zoom 16 | Best ready-made option |
+| NOAA MRMS ImageServer | 6–8 min | 6–10 min | 565 m | Worse on every axis; no published dBZ legend; ~100 KB/tile |
+| RainViewer keyless | 10 min | 5–8 min | zoom 7 | Already the non-US fallback |
+| **NCEP raw MRMS** | **~2 min** | **~1–2 min** | 1 km | The only real upgrade |
+
+`https://mrms.ncep.noaa.gov/data/2D/MergedReflectivityQCComposite/` publishes
+every ~2 minutes (observed 05:08:41, 05:10:40, 05:12:40, 05:14:39). Each file is
+1.1 MB gzipped, GRIB2 edition 2, 7000 × 3500 at 0.01°, and — usefully — data
+representation **template 41, which is PNG-packed**, so decoding is: walk the
+GRIB2 sections, pull section 7, PNG-decode, apply the section 5 scale.
+
+The blocker is memory, not decoding: one CONUS field is 24.5M points, 98 MB as
+Float32, against a 512 MB Render instance. It would have to render tiles on
+demand and cache the tiles, never holding frame fields in RAM.
 
 ## Open questions for Joe
 
