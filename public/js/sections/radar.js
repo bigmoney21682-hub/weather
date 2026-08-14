@@ -80,6 +80,7 @@ export function radarSection() {
   const scrub = el('input', { type: 'range', class: 'scrub', min: '0', max: '0', step: '0.01', value: '0', 'aria-label': 'Radar frame' });
   const speedBtn = el('button', { class: 'chip', type: 'button', text: SPEEDS[0].label });
   const recenter = el('button', { class: 'chip', type: 'button', text: 'Recenter' });
+  const expandBtn = el('button', { class: 'chip', type: 'button', text: 'Expand', 'aria-expanded': 'false' });
 
   clear(ui.body).append(
     mapEl,
@@ -89,7 +90,7 @@ export function radarSection() {
       playBtn,
       scrub,
       timeLabel,
-      el('div', { class: 'control-group' }, speedBtn, recenter),
+      el('div', { class: 'control-group' }, speedBtn, recenter, expandBtn),
     ),
     el(
       'div',
@@ -447,6 +448,58 @@ export function radarSection() {
   recenter.addEventListener('click', () => {
     const place = getLocation();
     if (place && map) map.setView([place.lat, place.lon], Math.max(map.getZoom(), 8), { animate: true });
+  });
+
+  /* --------------------------------------------------------- fullscreen -- */
+
+  // Filling the screen is done in two layers, because the Fullscreen API is not
+  // everywhere — iPhone Safari has never offered it for anything but a video.
+  // The class does the whole job on its own: the card is fixed to the viewport,
+  // above the sticky jump bar, with the map taking whatever the controls and the
+  // legend leave. Native fullscreen, where there is one, is asked for on top of
+  // that, and all it adds is dropping the browser's own chrome. Where it is
+  // missing or refused, the class is already the answer and nothing is lost.
+  //
+  // Either way it is the ResizeObserver in map.js that tells Leaflet its
+  // container changed size, so there is no invalidateSize to place by hand.
+  let expanded = false;
+
+  function paintExpanded(on) {
+    expanded = on;
+    ui.card.classList.toggle('card-expanded', on);
+    document.body.classList.toggle('has-expanded-card', on);
+    expandBtn.textContent = on ? 'Collapse' : 'Expand';
+    expandBtn.classList.toggle('active', on);
+    expandBtn.setAttribute('aria-expanded', String(on));
+  }
+
+  function expand() {
+    if (expanded) return;
+    paintExpanded(true);
+    // Both hops are optional: the method is missing on browsers that have no
+    // element fullscreen, and a refusal rejects. Neither is worth reporting —
+    // the card is already filling the screen either way.
+    ui.card.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {});
+  }
+
+  function collapse() {
+    if (!expanded) return;
+    paintExpanded(false);
+    if (document.fullscreenElement === ui.card) document.exitFullscreen()?.catch(() => {});
+  }
+
+  expandBtn.addEventListener('click', () => (expanded ? collapse() : expand()));
+
+  // Native fullscreen takes Escape for itself; this is for the fallback, where
+  // nothing but our own class is holding the card over the page.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && expanded) collapse();
+  });
+
+  // Leaving fullscreen by a route the button does not own — Escape, the
+  // browser's own control, or another element taking fullscreen from us.
+  document.addEventListener('fullscreenchange', () => {
+    if (expanded && document.fullscreenElement !== ui.card) collapse();
   });
 
   /**
