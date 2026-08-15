@@ -46,6 +46,14 @@ your coordinate. It is used exactly like a typed location — resolved to a plac
 name, then used for the sections — and stored in the same single `localStorage`
 entry. It is not sent anywhere else.
 
+**"Follow me"** is the same thing repeated: while it is on, the browser reports the
+device's position as it moves, and each position that counts as a new place (three
+miles on, and no sooner than ninety seconds after the last) is used exactly like a
+typed location. No trail is kept. Only the latest position is stored, in that same
+single entry, overwriting the one before it — there is nowhere in this app that a
+route or a history of where you have been could accumulate. Follow mode never
+survives a reload, and any deliberate choice of another place turns it off.
+
 ## Verifying this yourself
 
 - `grep -r "localStorage" public/js` — one key, in `public/js/store.js`.

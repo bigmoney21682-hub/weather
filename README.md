@@ -7,6 +7,12 @@ switch, and star the one the page should open on.
 Press and hold any pill in the header to drag the sections into whatever order you
 read them in; the order sticks in this browser.
 
+**Use my location** holds out a few seconds for a real GPS fix rather than taking the
+first network estimate the phone offers, and says so when all it could get was the
+vague one. **Follow me** keeps the whole page moving with you — every section
+refetches once you have covered three miles, so a drive stays ahead of you without
+hammering the feeds. Searching, or tapping a saved pill, parks it again.
+
 - **Weather** — current conditions and an hourly forecast with day/night icons.
 - **Weather Advisories** — active NWS watches, warnings and advisories for your point.
 - **Radar** — the last hour of global precipitation radar, looping in five-minute

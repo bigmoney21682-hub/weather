@@ -88,6 +88,25 @@ export function duration(ms) {
   return `${Math.floor(m / 60)} hr ${m % 60} min`;
 }
 
+/** Great-circle distance in metres between two {lat, lon} points. */
+export function metersBetween(a, b) {
+  const R = 6371008.8;
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLon = (b.lon - a.lon) * rad;
+  const s =
+    Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+/** "±120 m" / "±38 mi" — a radius the reader can picture. */
+export function accuracyLabel(m) {
+  if (m == null) return '';
+  if (m < 1000) return `±${Math.round(m)} m`;
+  const miles = m / 1609.34;
+  return `±${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`;
+}
+
 /** Rate-limited, latest-wins async runner so rapid location changes don't stack. */
 export function latest(fn) {
   let token = 0;

@@ -1,6 +1,6 @@
 // The sticky location bar at the top of the page. Every section reads from it.
 
-import { el, clear, mount } from './util.js';
+import { el, clear, mount, accuracyLabel } from './util.js';
 import {
   getLocation,
   onLocation,
@@ -12,7 +12,12 @@ import {
   removePlace,
   setDefaultPlace,
   onSavedPlaces,
+  onFollowChange,
+  startFollowing,
+  stopFollowing,
+  isFollowing,
   placeId,
+  COARSE_FIX_M,
 } from './store.js';
 
 export function locationBar() {
@@ -31,43 +36,101 @@ export function locationBar() {
     el('span', { class: 'gps-dot', 'aria-hidden': 'true' }),
     'Use my location',
   );
+  const follow = el(
+    'button',
+    {
+      class: 'btn',
+      type: 'button',
+      'aria-pressed': 'false',
+      title: 'Keep the forecast on the move with you',
+    },
+    el('span', { class: 'follow-dot', 'aria-hidden': 'true' }),
+    el('span', { class: 'btn-label', text: 'Follow me' }),
+  );
   const current = el('div', { class: 'loc-current' });
-  const message = el('p', { class: 'loc-message', role: 'status' });
+  const message = el('div', { class: 'loc-message', role: 'status' });
 
-  const form = el('form', { class: 'loc-form' }, input, submit, gps);
+  /** One place for every message the bar shows, error or not. */
+  function say(text, { error = false, help = [] } = {}) {
+    message.className = `loc-message${error ? ' error' : ''}`;
+    clear(message);
+    if (!text) return;
+    message.append(el('p', { text }));
+    if (help.length) {
+      message.append(el('ul', { class: 'loc-help' }, help.map((step) => el('li', { text: step }))));
+    }
+  }
+
+  const form = el('form', { class: 'loc-form' }, input, submit, gps, follow);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const q = input.value.trim();
     if (!q) return;
     setBusy(submit, true, 'Searching…');
-    message.className = 'loc-message';
-    message.textContent = '';
+    say('');
     try {
       await searchLocation(q);
       input.value = '';
       input.blur();
     } catch (err) {
-      message.className = 'loc-message error';
-      message.textContent = err.message;
+      say(err.message, { error: true });
     } finally {
       setBusy(submit, false, 'Search');
     }
   });
 
+  const restoreGps = () => {
+    gps.disabled = false;
+    clear(gps).append(el('span', { class: 'gps-dot', 'aria-hidden': 'true' }), 'Use my location');
+  };
+
   gps.addEventListener('click', async () => {
     setBusy(gps, true, 'Locating…');
-    message.className = 'loc-message';
-    message.textContent = '';
+    say('Asking your device where it is…');
     try {
-      await useDeviceLocation();
+      // The first fix is usually the coarse one; saying so explains the wait.
+      const place = await useDeviceLocation({
+        onProgress(m) {
+          if (m > COARSE_FIX_M) say(`Got a rough fix (${accuracyLabel(m)}) — holding on for GPS…`);
+        },
+      });
+      if (place.accuracyM > COARSE_FIX_M) {
+        say(
+          `That fix is only good to ${accuracyLabel(place.accuracyM)}, which means the device answered from the network rather than GPS.`,
+          { help: PRECISE_HELP },
+        );
+      } else {
+        say('');
+      }
     } catch (err) {
-      message.className = 'loc-message error';
-      message.textContent = err.message;
+      say(err.message, { error: true, help: err.help || [] });
     } finally {
-      gps.disabled = false;
-      clear(gps).append(el('span', { class: 'gps-dot', 'aria-hidden': 'true' }), 'Use my location');
+      restoreGps();
     }
+  });
+
+  follow.addEventListener('click', () => {
+    if (isFollowing()) {
+      stopFollowing();
+      say('');
+      return;
+    }
+    say('Following this device — the forecast will move with you.');
+    startFollowing({
+      onFix(place) {
+        say(`Following — now showing ${place.label}.`);
+      },
+      onError(err) {
+        say(err.message, { error: !err.transient, help: err.help || [] });
+      },
+    });
+  });
+
+  onFollowChange((on) => {
+    follow.classList.toggle('on', on);
+    follow.setAttribute('aria-pressed', String(on));
+    follow.querySelector('.btn-label').textContent = on ? 'Following' : 'Follow me';
   });
 
   onLocation((place) => {
@@ -83,11 +146,11 @@ export function locationBar() {
         { class: 'loc-text' },
         el('b', { text: place.label }),
         el('span', {
-          class: 'loc-coords',
+          class: `loc-coords${place.accuracyM > COARSE_FIX_M ? ' coarse' : ''}`,
           text:
             `${place.lat.toFixed(4)}, ${place.lon.toFixed(4)}` +
             (place.source ? ` · ${place.source}` : '') +
-            (place.accuracyM ? ` · ±${place.accuracyM} m` : ''),
+            (place.accuracyM ? ` · ${accuracyLabel(place.accuracyM)}` : ''),
         }),
       ),
       el('button', {
@@ -154,8 +217,10 @@ export function locationBar() {
   });
 
   // Anywhere the user actually lands becomes a pill, so the list builds itself.
+  // A drive is not a series of choices, though, so follow-mode fixes are left
+  // out — otherwise an hour on the highway would bury the list.
   onLocation((place) => {
-    if (place) savePlace(place);
+    if (place && !place.follow) savePlace(place);
   });
 
   const alternatives = el('div', { class: 'loc-alts' });
@@ -198,6 +263,14 @@ export function locationBar() {
     ),
   );
 }
+
+// A fix this vague came from the network, not the satellites — on both phones
+// the cure is the same permission, worded differently.
+const PRECISE_HELP = [
+  'iPhone: Settings → Privacy & Security → Location Services → Safari Websites, and turn on Precise Location.',
+  'Android: long-press the browser icon → App info → Permissions → Location, and turn on “Use precise location”.',
+  'Then tap “Use my location” again — outdoors, or by a window, gets the satellites in play.',
+];
 
 function setBusy(btn, busy, label) {
   btn.disabled = busy;
