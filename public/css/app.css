@@ -46,6 +46,12 @@
      it never reads as another series on the chart. */
   --chart-now: rgba(190, 202, 222, 0.6);
 
+  /* Everything on the page is drawn at this multiple of its natural size. A
+     phone turned sideways trades height it does not have for width it does, so
+     landscape drops this to 0.75 and gets a third more page in the same strip
+     of screen. See the landscape block at the foot of this file. */
+  --ui-scale: 1;
+
   --radius: 16px;
   --radius-sm: 10px;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
@@ -2294,5 +2300,40 @@ main > :nth-child(n + 6) { animation-delay: 0.2s; }
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* ------------------------------------------------------------- landscape -- */
+
+/* A phone on its side has roughly half the height it had upright, and the page
+   is laid out down the screen, so the same content needs twice the scrolling.
+   Drawing it all at 75% hands that height back: three rows of a forecast where
+   there were two, and a map that still leaves room for the card around it.
+
+   `zoom` is what does it, rather than a transform: it scales the layout itself,
+   so the page still flows, sticky still sticks, and hit targets stay under the
+   pixels they are drawn on. Leaflet 1.9 measures its container with
+   `getBoundingClientRect` against `offsetWidth` and divides the difference out,
+   so dragging and tapping the maps land in the right place at any scale.
+
+   Held to touch screens: a desktop window is always "landscape", and shrinking
+   the site on a monitor with height to spare would just be small. The height
+   ceiling keeps this to phones and tablets turned sideways. */
+@media (orientation: landscape) and (pointer: coarse) and (max-height: 820px) {
+  body {
+    --ui-scale: 0.75;
+    zoom: var(--ui-scale);
+  }
+
+  /* The expanded map card is fixed to the viewport. A fixed element still
+     carries the zoom it inherits, so `inset: 0` would resolve to the screen and
+     then be drawn at three-quarters of it, leaving a gap down two sides.
+     Cancelling the scale here puts the card back at an effective zoom of 1, so
+     `inset: 0` means the screen again. Filling the screen is the whole point of
+     the expanded card, and once it is full-screen the page is no longer
+     competing for height, so its contents are left at full size too. */
+  .card-expanded,
+  .card-expanded:fullscreen {
+    zoom: calc(1 / var(--ui-scale));
   }
 }
