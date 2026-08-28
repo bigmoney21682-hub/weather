@@ -276,10 +276,18 @@ function blur(field, w, h, scratch) {
 }
 
 /**
- * Turn a tile of raw reflectivity into rain: read the dBZ back off the ramp,
- * drop the bins below the weather, soften what is left, and repaint it.
+ * Turn a tile of raw reflectivity into rain: recover the dBZ, drop the bins
+ * below the weather, soften what is left, and repaint it.
+ *
+ * `readDbz` is how the number comes back out of the pixel, and it is the only
+ * thing that differs between the two reflectivity feeds. Iowa State sends a
+ * picture on the NWS ramp, so its dBZ has to be inverted out of the colour;
+ * MRMS is decoded from GRIB on our own server, which puts the number straight
+ * into the red channel and saves the round trip. Everything after that — the
+ * clear-air cut, the normalised convolution, the palette, and the signature the
+ * motion estimate reads off the painted alpha — is one implementation.
  */
-function paintNexrad(data, w, h) {
+function paintReflectivity(data, w, h, readDbz) {
   const colours = rainColours();
   const n = w * h;
   const [value, cover, scratch] = fields(n);
@@ -288,7 +296,7 @@ function paintNexrad(data, w, h) {
   for (let i = 0; i < n; i++) {
     const alpha = data[i * 4 + 3];
     if (alpha === 0) continue;
-    const dbz = dbzFor(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+    const dbz = readDbz(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
     if (dbz < FLOOR - FADE) {
       data[i * 4 + 3] = 0; // clear-air return and ground clutter
       continue;
@@ -371,9 +379,15 @@ function signatureOf(data, w, h) {
 
 /* -------------------------------------------------------------- layer ----- */
 
+// The reflectivity MRMS tiles carry, encoded by lib/mrms.js as `(dbz + 32) * 2`
+// in the red channel. Alpha is 0 or 255 there and nothing else, so the canvas
+// hands the byte back exactly as it was written.
+const readMrmsDbz = (r) => r / 2 - 32;
+
 const PAINTERS = {
   rainviewer: (data) => paintRainviewer(data),
-  nexrad: (data, w, h) => paintNexrad(data, w, h),
+  nexrad: (data, w, h) => paintReflectivity(data, w, h, dbzFor),
+  mrms: (data, w, h) => paintReflectivity(data, w, h, readMrmsDbz),
 };
 
 // Built on first use rather than at module scope: Leaflet is a deferred classic

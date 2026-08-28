@@ -20,6 +20,7 @@ import { getSurf } from './lib/surf.js';
 import { getAirQuality } from './lib/airquality.js';
 import { getOceanQuality } from './lib/oceanquality.js';
 import { getRadar } from './lib/radar.js';
+import { getTile as getMrmsTile } from './lib/mrms.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { coords, num } from './lib/util.js';
 
@@ -190,9 +191,50 @@ async function serveStatic(req, res, pathname) {
 
 /* --------------------------------------------------------------- server ---- */
 
+// Rendered radar tiles: /api/radar/mrms/20260828-103841/8/69/108.png
+//
+// Its own path rather than a query string because it is the one route that
+// answers with an image, and because a frame's tile never changes once the
+// composite is published — so it can be cached hard, by us and by the browser.
+const MRMS_TILE_PATH = /^\/api\/radar\/mrms\/(\d{8}-\d{6})\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.png$/;
+
+async function serveMrmsTile(res, match) {
+  const [, stamp, z, x, y] = match;
+  const zoom = Number(z);
+  const limit = 2 ** zoom;
+  if (zoom > 20 || Number(x) >= limit || Number(y) >= limit) {
+    sendJSON(res, 400, { error: 'Tile is off the map' });
+    return;
+  }
+  try {
+    const png = await getMrmsTile(stamp, zoom, Number(x), Number(y));
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': png.length,
+      // A published frame is immutable, so this can be kept for as long as the
+      // browser cares to. It is what keeps the loop off the decoder entirely
+      // once it has played through once.
+      'Cache-Control': 'public, max-age=3600, immutable',
+    }).end(png);
+  } catch (err) {
+    console.error(`[api] mrms tile ${stamp}/${z}/${x}/${y}: ${err.message}`);
+    sendJSON(res, 502, { error: err.message });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const handler = routes[url.pathname];
+
+  const tile = MRMS_TILE_PATH.exec(url.pathname);
+  if (tile) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJSON(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+    await serveMrmsTile(res, tile);
+    return;
+  }
 
   if (handler) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {

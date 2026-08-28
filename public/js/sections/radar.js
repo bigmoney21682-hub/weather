@@ -55,11 +55,21 @@ const FRAME_OPACITY = 0.78;
 const MAX_DELTA = 200; // a backgrounded tab must not fast-forward on its way back
 
 // What to call each feed while it loads. Which one answers depends on where you
-// are, and the two are far apart in how long they take to arrive, so the wait
-// says which one it is waiting for rather than a generic "loading".
+// are, and they are far apart in how long they take to arrive, so the wait says
+// which one it is waiting for rather than a generic "loading".
 const FEED_NAMES = {
+  mrms: 'MRMS composite',
   nexrad: 'NEXRAD mosaic',
   rainviewer: 'Global composite',
+};
+
+// The half-sentence under the legend that says what you are actually looking
+// at. Each feed gives up something different, and saying which is the whole
+// point — a kilometre grid and a continent-wide one are not the same picture.
+const SOURCE_NOTES = {
+  mrms: 'a kilometre grid, refreshed every two minutes; colour follows rain rate.',
+  nexrad: 'sharp enough to zoom right in; colour follows rain rate.',
+  rainviewer: 'broad strokes, so it stops short of street level; colour follows rain rate.',
 };
 
 // The basemap's own limit, and what the frame layers are built with.
@@ -215,7 +225,11 @@ export function radarSection() {
   function applyZoomCeiling() {
     if (!map) return;
     const native = tileOptions?.maxNativeZoom;
-    const cap = native == null ? MAP_MAX_ZOOM : Math.min(MAP_MAX_ZOOM, native + ZOOM_HEADROOM);
+    // A feed may ask for more room than the default. MRMS renders its own tiles
+    // and stops early on purpose, so the two levels that suit the global
+    // composite would pin the map far shallower than the data deserves.
+    const headroom = tileOptions?.zoomHeadroom ?? ZOOM_HEADROOM;
+    const cap = native == null ? MAP_MAX_ZOOM : Math.min(MAP_MAX_ZOOM, native + headroom);
     map.setMaxZoom(cap);
     // Unanimated: this is the feed changing under the view, not a gesture, and
     // gliding out three levels reads as the map wandering off on its own.
@@ -228,6 +242,24 @@ export function radarSection() {
     let n = 0;
     for (const f of frames) if (layers.get(f.key)?._radarLoaded) n++;
     return n;
+  }
+
+  /**
+   * How much of the loop can be played without showing a frame that has not
+   * arrived yet — the leading run of painted frames.
+   *
+   * The five-minute mosaic made this moot: a dozen tiles came off a CDN in
+   * parallel and were all there within a second. MRMS frames are decoded one at
+   * a time on our own server and land in order over several seconds, so
+   * animating the full list from the outset would flash blanks through the loop
+   * for as long as the load took. Playing only what has landed means the loop
+   * starts short and lengthens as the rest arrive, and never shows a hole.
+   */
+  function playableFrames() {
+    let n = 0;
+    while (n < frames.length && layers.get(frames[n].key)?._radarLoaded) n++;
+    // Nothing has painted yet: show the first frame rather than an empty map.
+    return Math.max(1, n);
   }
 
   function reportProgress() {
@@ -343,16 +375,17 @@ export function radarSection() {
     scrub.value = next;
   }
 
-  function render(pos) {
+  function render(pos, span = frames.length) {
     if (!frames.length) return;
-    const i = Math.min(Math.max(0, Math.floor(pos)), frames.length - 1);
+    const count = Math.min(Math.max(1, span), frames.length);
+    const i = Math.min(Math.max(0, Math.floor(pos)), count - 1);
     const through = Math.min(1, Math.max(0, pos - i));
     // Eased across the whole slot, so the picture is always on its way
     // somewhere. Nothing is held and nothing is cut.
     const blend = ease(through);
-    // Round, not off the end: past the newest frame the loop dissolves back
-    // into the oldest. A single frame has nowhere to go, so it just stands.
-    const nextIndex = blend > 0 && frames.length > 1 ? (i + 1) % frames.length : null;
+    // Round, not off the end: past the newest frame in play the loop dissolves
+    // back into the oldest. A lone frame has nowhere to go, so it just stands.
+    const nextIndex = blend > 0 && count > 1 ? (i + 1) % count : null;
 
     const from = layerFor(i);
     const to = nextIndex == null ? null : layerFor(nextIndex);
@@ -365,7 +398,7 @@ export function radarSection() {
     // Warm the frame after this one so its tiles are fetched and recoloured
     // well before the fade reaches them — wrapping too, so the oldest frame is
     // ready by the time the loop comes back round to it.
-    if (frames.length > 1) layerFor((i + 2) % frames.length);
+    if (count > 1) layerFor((i + 2) % count);
 
     // Two stacked translucent layers would wash out where they overlap, so the
     // lower one is boosted to land the composite back on FRAME_OPACITY.
@@ -444,10 +477,10 @@ export function radarSection() {
 
     // One slot per frame, including the last one, whose slot is the fold back
     // to the start — so the cursor simply wraps and there is no end to stop at.
-    const span = frames.length;
-    cursor = span > 0 ? (cursor + dt / SPEEDS[speed].ms) % span : 0;
+    const span = playableFrames();
+    cursor = (cursor + dt / SPEEDS[speed].ms) % span;
 
-    render(cursor);
+    render(cursor, span);
     syncScrub(cursor);
     raf = requestAnimationFrame(tick);
   }
@@ -575,10 +608,7 @@ export function radarSection() {
         source = data.source;
         tileOptions = { ...data.tile, attribution: data.attribution };
         motion = null; // different feed, different tile grid
-        sourceNote.textContent =
-          data.source === 'nexrad'
-            ? `${data.label} — sharp enough to zoom right in; colour follows rain rate.`
-            : `${data.label} — broad strokes, so it stops short of street level; colour follows rain rate.`;
+        sourceNote.textContent = `${data.label} — ${SOURCE_NOTES[data.source] || SOURCE_NOTES.rainviewer}`;
       }
 
       // The window has slid, so remember the moment the loop was showing and
