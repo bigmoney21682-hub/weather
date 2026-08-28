@@ -1,5 +1,5 @@
-// Surf: wave height, period, water temperature, the tide table, and where the
-// biggest swell is inside a 60-mile radius.
+// Surf: wave height, period, water temperature, the tide table, and which beach
+// up or down the coast has the biggest swell on it right now.
 
 import { api, el, clear, f, clock } from '../util.js';
 import { createSection, statTile } from '../section.js';
@@ -35,8 +35,10 @@ export function surfSection() {
   const tideBox = el('div', { class: 'tides' });
   const tideHead = el('h4', { class: 'sub-head', text: 'Tides' });
   const biggestBox = el('div', { class: 'biggest' });
+  const pillBox = el('div', { class: 'spot-pills' });
 
   clear(ui.body).append(
+    pillBox,
     stats,
     // Tides sit right under the swell and water-temp tiles: they are part of
     // the same "should I paddle out?" glance, not an appendix.
@@ -69,6 +71,10 @@ export function surfSection() {
   // A spot searched here overrides the page location for this section only,
   // until "Use my location" puts it back in sync.
   let override = null;
+  // A spot chosen from the pills. It moves which beach is reported on, but not
+  // which beaches are offered — the row is anchored on the one nearest home.
+  let selected = null;
+  let place = null;
   let token = 0;
 
   form.addEventListener('submit', async (e) => {
@@ -79,6 +85,7 @@ export function surfSection() {
     go.textContent = '…';
     try {
       override = await api('/api/geocode', { q });
+      selected = null;
       input.value = '';
       await load(override);
     } catch (err) {
@@ -91,27 +98,76 @@ export function surfSection() {
 
   reset.addEventListener('click', () => {
     override = null;
-    const place = getLocation();
-    if (place) load(place);
+    selected = null;
+    const home = getLocation();
+    if (home) load(home);
   });
 
-  async function load(place) {
+  function selectSpot(spot) {
+    selected = { lat: spot.lat, lon: spot.lon };
+    if (place) load(place);
+  }
+
+  async function load(next) {
+    place = next;
     const mine = ++token;
     ui.loading('Reading the buoys…');
     try {
       // An explicitly searched spot is taken at its word; otherwise the server
-      // snaps to the nearest beach that actually has swell.
-      const data = await api('/api/surf', { lat: place.lat, lon: place.lon, miles: 60, snap: override ? '0' : '1' });
+      // snaps to the nearest named beach on the open ocean.
+      const data = await api('/api/surf', {
+        lat: place.lat,
+        lon: place.lon,
+        miles: 30,
+        snap: override ? '0' : '1',
+        ...(selected ? { atLat: selected.lat, atLon: selected.lon } : {}),
+      });
       if (mine !== token) return;
-      render(data, place);
+      render(data);
       ui.ready();
-      if (!data.water) ui.note(data.note);
+      if (data.note) ui.note(data.note);
     } catch (err) {
       if (mine === token) ui.error(err.message, () => load(place));
     }
   }
 
-  function render(data, place) {
+  /**
+   * The spots up and down the coast, in the order you would drive them.
+   *
+   * They run in one row from one end of the coast to the other rather than in
+   * two lists either side of "here", because that is how a surfer already holds
+   * the coast in their head — and the labelled ends say which way is which.
+   */
+  function renderPills(data) {
+    clear(pillBox);
+    if (!data.nearby?.length) return;
+
+    const ends = data.shoreEnds || { forward: 'North', back: 'South' };
+    pillBox.append(el('span', { class: 'spot-end', text: `↓ ${ends.back}` }));
+    for (const spot of data.nearby) {
+      const pill = el('button', {
+        class: `chip${spot.selected ? ' active' : ''}`,
+        type: 'button',
+        title: `Surf report for ${spot.name} — ${f.miles(spot.distanceMiles)} from ${place.label}`,
+        'aria-pressed': spot.selected ? 'true' : 'false',
+      });
+      pill.append(
+        el('span', { class: 'pill-name', text: spot.name }),
+        el('span', { class: 'pill-dist', text: f.miles(spot.distanceMiles) }),
+      );
+      pill.addEventListener('click', () => selectSpot(spot));
+      pillBox.append(pill);
+    }
+    pillBox.append(el('span', { class: 'spot-end', text: `${ends.forward} ↑` }));
+
+    // Open on the spot you are actually at, however far along the row it sits.
+    // Scrolling the strip by hand rather than with scrollIntoView, which would
+    // also drag the page down to a card the reader may not have got to yet.
+    const active = pillBox.querySelector('.chip.active');
+    if (active) pillBox.scrollLeft = active.offsetLeft - (pillBox.clientWidth - active.offsetWidth) / 2;
+  }
+
+  function render(data) {
     tz = data.timezone || undefined;
     // The card reports on a beach, not on the town in the location bar.
     const beach = data.spot
@@ -122,6 +178,8 @@ export function surfSection() {
     // Everything below that needs to point at somewhere named falls back to the
     // location bar when the beach lookup came up empty.
     const spotName = data.spot?.name || place.label;
+
+    renderPills(data);
 
     const c = data.current || {};
     clear(stats).append(
@@ -134,30 +192,23 @@ export function surfSection() {
     clear(biggestBox);
     if (data.biggest) {
       const b = data.biggest;
+      const here = b.name === spotName;
+      const jump = el('button', { class: 'chip', type: 'button', text: 'Show its forecast →' });
+      jump.addEventListener('click', () => selectSpot(b));
       biggestBox.append(
         el(
           'div',
           { class: 'callout' },
           el('span', { class: 'callout-label', text: `Biggest wave within ${data.scanRadiusMiles} mi` }),
           el('span', { class: 'callout-value', text: f.ft(b.waveFt) }),
-          b.place ? el('span', { class: 'callout-city', text: `off ${b.place.name}` }) : null,
+          el('span', { class: 'callout-city', text: `at ${b.name}` }),
           el('span', {
             class: 'callout-note',
-            // Always says where it is relative to somewhere named, so the line
-            // reads as a place even when no beach could be matched to it.
             text:
-              (b.distanceMiles < 1
-                ? `right here at ${spotName}`
-                : `${f.miles(b.distanceMiles)} ${compass(b.bearingDeg)} of ${spotName}`) +
+              (here ? 'the spot you are looking at' : `${f.miles(b.distanceMiles)} from ${place.label}`) +
               (b.periodS ? ` · ${Math.round(b.periodS)} s period` : ''),
           }),
-          el('a', {
-            class: 'chip link',
-            href: `https://www.openstreetmap.org/?mlat=${b.lat}&mlon=${b.lon}#map=10/${b.lat}/${b.lon}`,
-            target: '_blank',
-            rel: 'noopener',
-            text: 'Show on map ↗',
-          }),
+          here ? null : jump,
         ),
       );
     }
@@ -213,13 +264,15 @@ export function surfSection() {
     }
   }
 
-  onLocation((place) => {
+  onLocation((home) => {
     if (override) return;
-    if (!place) {
+    // A spot picked off the old coast means nothing on the new one.
+    selected = null;
+    if (!home) {
       ui.empty('Set a location above to see surf conditions.');
       return;
     }
-    load(place);
+    load(home);
   });
 
   return ui.card;

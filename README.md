@@ -23,8 +23,10 @@ hammering the feeds. Searching, or tapping a saved pill, parks it again.
 - **Wind** — sustained speed and gusts for today plus two days, pinch-zoomable.
 - **Hurricane Tracker** — every active tropical cyclone worldwide, with forecast track,
   cone of uncertainty, wind field and intensity forecast in mph.
-- **Surf** — conditions at the nearest beach with real swell, plus today's two daylight
-  tides and the biggest wave within 60 miles, named by the town it breaks off.
+- **Surf** — conditions at the nearest named surf spot on the open ocean, with the five
+  spots up and down the coast a tap away, today's two daylight tides, and the biggest
+  wave within 40 miles at a beach you could drive to. Bays, lakes and the Intracoastal
+  are deliberately excluded; see [docs/surf-spots.md](docs/surf-spots.md) for how.
 - **Air Quality** — US AQI, pollutant breakdown, 24-hour forecast, and advisories or
   hot spots within 60 miles.
 - **Ocean Quality** — a swim rating for the nearest beach, built from real-time USGS
@@ -89,7 +91,7 @@ There is no build, no bundler and no framework. Edit a file, reload the page.
 | Lightning | [Blitzortung.org](https://www.blitzortung.org/) volunteer network |
 | Hurricanes | [NHC](https://www.nhc.noaa.gov/) and [JTWC](https://www.metoc.navy.mil/jtwc/jtwc.html) |
 | Surf | Open-Meteo Marine + [NOAA Tides & Currents](https://tidesandcurrents.noaa.gov/) |
-| Beach and town names | OpenStreetMap Nominatim + [Overpass](https://overpass-api.de/) |
+| Surf spots and coastline | OpenStreetMap via [Overpass](https://overpass-api.de/) |
 | Air quality | Open-Meteo Air Quality (CAMS) + NWS alerts |
 | Ocean quality | [USGS NWIS](https://waterservices.usgs.gov/) real-time gauges + NOAA Tides &amp; Currents + Open-Meteo + NWS alerts |
 | Geocoding | Zippopotam, Open-Meteo Geocoding, OpenStreetMap Nominatim |

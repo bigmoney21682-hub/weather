@@ -132,8 +132,13 @@ const routes = {
 
   async '/api/surf'(query) {
     const { lat, lon } = coords(query);
-    const miles = num(query.get('miles'), { min: 5, max: 200, fallback: 60 });
-    return getSurf(lat, lon, { radiusMiles: miles, snapToBeach: query.get('snap') !== '0' });
+    const miles = num(query.get('miles'), { min: 5, max: 200, fallback: 30 });
+    // `at` picks one of the spots the last response offered, so tapping along
+    // the coast does not move the search — the list of pills stays put.
+    const atLat = num(query.get('atLat'), { min: -90, max: 90 });
+    const atLon = num(query.get('atLon'), { min: -180, max: 180 });
+    const at = atLat != null && atLon != null ? { lat: atLat, lon: atLon } : null;
+    return getSurf(lat, lon, { radiusMiles: miles, snapToBeach: query.get('snap') !== '0', at });
   },
 
   async '/api/air'(query) {

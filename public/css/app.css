@@ -1734,6 +1734,47 @@ body.has-expanded-card {
   flex: 1 1 160px;
 }
 
+/* The run of surf spots along the coast. One scrolling row, ordered the way the
+   shore runs, with the ends labelled so it is obvious which way is up-coast. */
+.spot-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding-bottom: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.spot-pills .chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.25;
+  flex: 0 0 auto;
+}
+
+.spot-pills .pill-name {
+  font-weight: 600;
+}
+
+.spot-pills .pill-dist {
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.spot-end {
+  flex: 0 0 auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+  padding: 0 2px;
+}
+
 .tide-rows {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
