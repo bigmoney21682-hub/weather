@@ -207,10 +207,17 @@ async function serveMrmsTile(res, match) {
     return;
   }
   try {
-    const png = await getMrmsTile(stamp, zoom, Number(x), Number(y));
+    const { png, timing } = await getMrmsTile(stamp, zoom, Number(x), Number(y));
     res.writeHead(200, {
       'Content-Type': 'image/png',
       'Content-Length': png.length,
+      // What it cost to make, or that it cost nothing because it was already
+      // drawn. This instance is a good deal slower than a laptop and the split
+      // between waiting on NCEP and working on the grid is not guessable from
+      // the outside — so it is reported rather than assumed.
+      'Server-Timing': timing
+        ? `fetch;dur=${timing.fetch}, decode;dur=${timing.decode}, render;dur=${timing.render}`
+        : 'cache;dur=0',
       // A published frame is immutable, so this can be kept for as long as the
       // browser cares to. It is what keeps the loop off the decoder entirely
       // once it has played through once.
