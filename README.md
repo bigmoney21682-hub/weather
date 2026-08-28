@@ -91,7 +91,7 @@ There is no build, no bundler and no framework. Edit a file, reload the page.
 | Lightning | [Blitzortung.org](https://www.blitzortung.org/) volunteer network |
 | Hurricanes | [NHC](https://www.nhc.noaa.gov/) and [JTWC](https://www.metoc.navy.mil/jtwc/jtwc.html) |
 | Surf | Open-Meteo Marine + [NOAA Tides & Currents](https://tidesandcurrents.noaa.gov/) |
-| Surf spots and coastline | OpenStreetMap via [Overpass](https://overpass-api.de/) |
+| Surf spots and coastline | OpenStreetMap via [Overpass](https://overpass-api.de/), baked into `data/surf-spots.json` |
 | Air quality | Open-Meteo Air Quality (CAMS) + NWS alerts |
 | Ocean quality | [USGS NWIS](https://waterservices.usgs.gov/) real-time gauges + NOAA Tides &amp; Currents + Open-Meteo + NWS alerts |
 | Geocoding | Zippopotam, Open-Meteo Geocoding, OpenStreetMap Nominatim |
@@ -156,6 +156,13 @@ in mind:
   check has no way to find a port it was not told about.
 - `.cache/` holds one derived file (the NOAA tide station list). It is safe to
   delete and is rebuilt on demand.
+- **Surf spots are baked into the repo, and need to be.** Overpass allows two
+  concurrent queries per IP, and on a shared host that budget belongs to whoever
+  else is on the address — from Render's free instances the coastline query never
+  gets a slot and every coast comes back empty. `data/surf-spots.json` is built
+  ahead of time by `node scripts/bake-surf-spots.js`; add a coast to `REGIONS`
+  there and re-run. Coasts outside it fall back to querying Overpass live, which
+  works on a laptop and generally will not on a shared host.
 
 ### Staying awake on a free instance
 

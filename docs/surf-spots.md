@@ -90,8 +90,9 @@ the ends North/South or East/West, which matters on the Gulf.
 
 ## What it costs
 
-Two Overpass queries per region, cached a week on a ~7 mile grid, plus a few
-hundred thousand ray tests that run in about a tenth of a second.
+Two Overpass queries per region and a few hundred thousand ray tests — about a
+minute in total. On a baked coast that all happens ahead of time and a request
+costs nothing; elsewhere it runs live, cached a week on a ~7 mile grid.
 
 Both queries are shaped around Overpass being charged by **area**, which is worth
 knowing before editing them:
@@ -110,6 +111,36 @@ A failed Overpass query is **allowed to throw past `cached`** so it is not
 stored. An empty result that came back cleanly — a landlocked location — is
 cached. Collapsing the two, which is what a `.catch(() => [])` inside the cached
 producer does, leaves one busy minute's outage sitting there for a week.
+
+## Why it is baked, not looked up
+
+Overpass allows **two concurrent queries per IP**, and on a shared host that
+budget belongs to whoever else is on the address. From Render's free instances
+the coastline query never gets a slot: it times out at 45 seconds, every time,
+while the identical query from a laptop answers in five. The section could not
+find a single beach on the live site, and no amount of retrying fixed it,
+because nothing was wrong with the query.
+
+Coastlines do not move, so the answer never needed to be worked out at request
+time. `scripts/bake-surf-spots.js` runs the pipeline for a list of regions and
+commits the result to `data/surf-spots.json`; `surfSpots` reads that in
+preference to asking Overpass anything, and makes no network call at all when
+the viewer is covered.
+
+    node scripts/bake-surf-spots.js              # fill in what is missing
+    node scripts/bake-surf-spots.js --force      # rebuild every region
+    node scripts/bake-surf-spots.js "Tampa, FL"  # just the regions named
+
+A region covers a viewer only when their **whole 30-mile search circle** falls
+inside the 60 miles that were baked, so the pills never stop short at the edge
+of the data and pass it off as the end of the coast. Coasts that are not baked
+fall through to the live query, which is what a dev machine does anyway — so
+adding a coast means adding a line to `REGIONS` and re-running, not changing any
+of the logic above.
+
+The bake is also the only cheap way to test tuning changes: it is the same
+pipeline, so a constant that breaks Santa Cruz breaks it in the bake too, and
+`data/surf-spots.json` diffs show exactly which spots a change added or lost.
 
 ## Known limits
 
