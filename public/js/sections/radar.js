@@ -4,14 +4,21 @@
 // shown in turn, which is far smoother than swapping a single layer's URL
 // because every frame is already in the tile cache by the time it is shown.
 //
-// Each frame is *held*, then dissolved quickly into the next, rather than being
-// ramped across the whole gap. Two scans five minutes apart are about four
-// kilometres apart on the ground — seven screen pixels at the zoom this map
-// opens at, thirty by the time you have zoomed in — and dissolving slowly
-// between two copies that far apart never reads as movement. You see the old
-// one fade where it stands while a second one appears alongside it: a shadow,
-// not a storm. A near-clean cut leaves the eye to do what it does with a
-// flipbook, and the short dissolve only takes the hard edge off the switch.
+// Nothing in the loop ever stops. The cursor runs at a constant rate across the
+// frames and straight back round to the start, and each frame eases into the
+// next across the whole of its slot rather than sitting still and then cutting.
+//
+// A slow, even dissolve on its own would not work: two scans five minutes apart
+// are about four kilometres apart on the ground — seven screen pixels at the
+// zoom this map opens at, thirty by the time you have zoomed in — and fading
+// between two copies that far apart reads as a shadow, not a storm. Two things
+// keep it reading as movement instead. The frames are carried along their own
+// measured drift for the whole slot (see radar-motion.js), so the two copies
+// are on top of each other by the time either is faint; and the blend is eased
+// rather than linear, so it spends most of the slot near one frame or the other
+// and crosses the middle — where both are half-there — quickly. The eased curve
+// settles onto each frame without ever holding it, which is what makes the
+// motion continuous where the old hold-then-cut had a stop at every step.
 
 import { api, el, clear } from '../util.js';
 import { createSection } from '../section.js';
@@ -31,13 +38,20 @@ const SPEEDS = [
   { label: '0.5×', ms: 1240 },
 ];
 
-// How much of a frame's slot it is held still for; the rest is the dissolve
-// into the next frame. Long enough that the eye settles on one picture, short
-// enough that two offset copies are never both on screen for any length of time.
-const HOLD = 0.76;
+/**
+ * Smootherstep: the eased blend that replaces the old hold-then-cut. It leaves
+ * and arrives with zero slope, so a frame settles into place and departs again
+ * without the jolt of a linear ramp, and it crosses the middle steeply, so the
+ * stretch where both frames are half-there — the part that reads as a ghost
+ * rather than as rain — is over about as fast as the cut used to be. What it
+ * never does is stop: there is no interval where the picture is not changing.
+ */
+function ease(t) {
+  const x = t < 0 ? 0 : t > 1 ? 1 : t;
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
 
 const FRAME_OPACITY = 0.78;
-const END_HOLD = 900; // beat on the newest frame before cutting back to the start
 const MAX_DELTA = 200; // a backgrounded tab must not fast-forward on its way back
 
 // What to call each feed while it loads. Which one answers depends on where you
@@ -109,8 +123,10 @@ export function radarSection() {
   let tileOptions = null; // tile geometry for whichever feed is in play
   let source = null;
   const layers = new Map(); // frame key -> tile layer, kept across refreshes
-  let cursor = 0; // continuous position across `frames`
-  let hold = 0; // milliseconds left of the end-of-loop pause
+  // Continuous position across `frames`, and it runs one slot past the last
+  // frame: that final slot is the newest frame folding back into the oldest,
+  // which is what closes the loop into a circle with no pause and no jump cut.
+  let cursor = 0;
   let raf = null;
   let lastTs = 0;
   let speed = 0;
@@ -185,6 +201,7 @@ export function radarSection() {
         reportProgress();
       });
       layer._radarLoaded = false;
+      layer._wxZ = 400 + i;
       layers.set(frame.key, layer);
     }
     return layer;
@@ -259,6 +276,13 @@ export function radarSection() {
     motion = shift ? { x: shift.dx / span, y: shift.dy / span, z: shift.z } : null;
   }
 
+  /** Stack a frame layer, skipping the write when it is already there. */
+  function setZ(layer, z) {
+    if (!layer || layer._wxZ === z) return;
+    layer._wxZ = z;
+    layer.setZIndex(z);
+  }
+
   /** Slide a whole frame layer across the map, in screen pixels. */
   function shiftLayer(layer, x, y) {
     const node = layer?.getContainer?.();
@@ -301,7 +325,10 @@ export function radarSection() {
 
   /** The scrub input snaps to its own step, so only write real movements. */
   function syncScrub(pos) {
-    const next = pos.toFixed(2);
+    // The wrap slot lives past the last frame and the scrub has no room for it,
+    // so the handle rests at the end for that half-second rather than running
+    // off the track. It is the one place the two disagree, and briefly.
+    const next = Math.min(pos, Math.max(0, frames.length - 1)).toFixed(2);
     if (next === scrubValue) return;
     scrubValue = next;
     scrub.value = next;
@@ -311,24 +338,35 @@ export function radarSection() {
     if (!frames.length) return;
     const i = Math.min(Math.max(0, Math.floor(pos)), frames.length - 1);
     const through = Math.min(1, Math.max(0, pos - i));
-    // Still for the first HOLD of the slot, then across in what is left.
-    const blend = through <= HOLD ? 0 : (through - HOLD) / (1 - HOLD);
-    const nextIndex = blend > 0 && i + 1 < frames.length ? i + 1 : null;
+    // Eased across the whole slot, so the picture is always on its way
+    // somewhere. Nothing is held and nothing is cut.
+    const blend = ease(through);
+    // Round, not off the end: past the newest frame the loop dissolves back
+    // into the oldest. A single frame has nowhere to go, so it just stands.
+    const nextIndex = blend > 0 && frames.length > 1 ? (i + 1) % frames.length : null;
 
     const from = layerFor(i);
     const to = nextIndex == null ? null : layerFor(nextIndex);
+    // The blend below assumes the incoming frame is the one on top, and
+    // stacking by frame index gives that for free at every step but the wrap,
+    // where the oldest frame is coming back in underneath the newest. Placing
+    // the active pair by hand makes the wrap composite like any other step.
+    setZ(from, 400 + i);
+    setZ(to, 400 + i + 1);
     // Warm the frame after this one so its tiles are fetched and recoloured
-    // well before the fade reaches them.
-    layerFor(Math.min(i + 2, frames.length - 1));
+    // well before the fade reaches them — wrapping too, so the oldest frame is
+    // ready by the time the loop comes back round to it.
+    if (frames.length > 1) layerFor((i + 2) % frames.length);
 
     // Two stacked translucent layers would wash out where they overlap, so the
     // lower one is boosted to land the composite back on FRAME_OPACITY.
     //
-    // Which one is lower matters, and it is `to`: layers are stacked by frame
-    // index, so the incoming frame sits *above* the outgoing one. Solving for
-    // `from` — as though it were on top — makes the curve badly lopsided, with
-    // the incoming frame taking a third of the picture a tenth of the way in
-    // and four fifths of it by halfway. That is the snap-then-sit the loop had.
+    // Which one is lower matters, and the stacking just above guarantees it is
+    // `from`: the incoming frame always sits above the outgoing one, so `from`
+    // is the one boosted. Solving for `to` instead — as though it were the
+    // lower — makes the curve badly lopsided, with the incoming frame taking a
+    // third of the picture a tenth of the way in and four fifths of it by
+    // halfway. That is the snap-then-sit this loop used to have.
     const toOpacity = to ? FRAME_OPACITY * blend : 0;
     const fromOpacity = to ? (FRAME_OPACITY * (1 - blend)) / (1 - toOpacity) : FRAME_OPACITY;
 
@@ -382,7 +420,12 @@ export function radarSection() {
         hour: 'numeric',
         minute: '2-digit',
       });
-      timeLabel.title = nextIndex == null ? 'Observed radar frame' : 'Fading between the frames either side';
+      timeLabel.title =
+        nextIndex == null
+          ? 'Observed radar frame'
+          : nextIndex === 0
+            ? 'Looping back to the start of the hour'
+            : 'Fading between the frames either side';
     }
   }
 
@@ -390,16 +433,10 @@ export function radarSection() {
     const dt = Math.min(MAX_DELTA, Math.max(0, ts - lastTs));
     lastTs = ts;
 
-    if (hold > 0) {
-      hold -= dt;
-      if (hold <= 0) cursor = 0;
-    } else {
-      cursor += dt / SPEEDS[speed].ms;
-      if (cursor >= frames.length - 1) {
-        cursor = Math.max(0, frames.length - 1);
-        hold = END_HOLD;
-      }
-    }
+    // One slot per frame, including the last one, whose slot is the fold back
+    // to the start — so the cursor simply wraps and there is no end to stop at.
+    const span = frames.length;
+    cursor = span > 0 ? (cursor + dt / SPEEDS[speed].ms) % span : 0;
 
     render(cursor);
     syncScrub(cursor);
@@ -435,7 +472,6 @@ export function radarSection() {
   playBtn.addEventListener('click', () => (playing ? pause() : play()));
   scrub.addEventListener('input', () => {
     pause();
-    hold = 0;
     cursor = Number(scrub.value);
     scrubValue = scrub.value; // the input already holds this; don't write it back
     render(cursor);
@@ -559,12 +595,11 @@ export function radarSection() {
         map.removeLayer(layer);
         layers.delete(key);
       }
-      frames.forEach((f, i) => layers.get(f.key)?.setZIndex(400 + i));
+      frames.forEach((f, i) => setZ(layers.get(f.key), 400 + i));
 
       scrub.max = String(Math.max(0, frames.length - 1));
       // Newest frame last, and there is no forecast tail on either feed.
       cursor = watching == null ? Math.max(0, frames.length - 1) : positionAt(frames, watching);
-      hold = 0;
       render(cursor);
       // The range just changed, so the cached value no longer describes the input.
       scrubValue = null;
