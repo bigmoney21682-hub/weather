@@ -18,7 +18,18 @@
 
 import { SIGNATURE_GRID as G } from './radar-tiles.js';
 
-const SEARCH = 10; // cells of shift to search, either way
+// Cells of shift to search, either way. It is a ceiling rather than a fixed
+// radius: the search is also held to a fraction of the grid it runs on, so that
+// even the furthest shift tested still has most of both frames overlapping.
+const SEARCH_MAX = 10;
+const SEARCH_FRACTION = 0.3;
+// Smallest grid worth correlating at all, in cells. One 512px tile reduces to a
+// 32-cell signature, and a single tile is what the radar map holds at most
+// phone sizes — so this has to sit below 32 or the common case never runs.
+const MIN_GRID = 24;
+// A shift is only believable if the two frames still substantially overlap at
+// it; correlating a sliver against a sliver finds a strong match in noise.
+const MIN_OVERLAP = 0.4;
 // What makes a match believable is how strongly the two frames resemble each
 // other once shifted — *not* how much that beats not shifting at all. Measured
 // against live feeds, the clear-air layer over Florida had the largest
@@ -66,7 +77,19 @@ function assemble(tiles, sigs, minX, minY, w, h) {
   return grid;
 }
 
-/** Normalised cross-correlation of `b` shifted by (dx, dy) against `a`. */
+/**
+ * Normalised cross-correlation of `b` shifted by (dx, dy) against `a`, taken
+ * over the region the two actually share at that shift.
+ *
+ * Correlating over a fixed interior instead — the whole grid less the search
+ * radius on every side, so that one window suits every shift — is what used to
+ * make this unusable on a small map. It throws away a border `SEARCH_MAX` cells
+ * deep whatever the shift, which on the 32-cell grid a single tile produces is
+ * two thirds of the picture, and it forced a guard demanding a grid wide enough
+ * to spare that border twice over. The radar map is one tile at most phone
+ * sizes, so the guard rejected the common case and the loop never advected at
+ * all. Per-shift overlap uses everything the pair has in common.
+ */
 function ncc(a, b, w, h, dx, dy) {
   let sa = 0;
   let sb = 0;
@@ -74,8 +97,12 @@ function ncc(a, b, w, h, dx, dy) {
   let sbb = 0;
   let sab = 0;
   let n = 0;
-  for (let y = SEARCH; y < h - SEARCH; y++) {
-    for (let x = SEARCH; x < w - SEARCH; x++) {
+  const y0 = Math.max(0, -dy);
+  const y1 = Math.min(h, h - dy);
+  const x0 = Math.max(0, -dx);
+  const x1 = Math.min(w, w - dx);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
       const va = a[y * w + x];
       const vb = b[(y + dy) * w + (x + dx)];
       sa += va;
@@ -119,12 +146,18 @@ export function estimateShift(a, b) {
   const minY = Math.min(...ys);
   const w = (Math.max(...xs) - minX + 1) * G;
   const h = (Math.max(...ys) - minY + 1) * G;
-  // Needs real room either side of the search window, and a sane amount of
-  // work. Three times the search width technically fits, but it leaves a strip
-  // barely ten cells deep to correlate over, and a vector fitted to a strip is
-  // how you end up sliding the whole map the wrong way. Refusing is cheap: the
-  // loop simply does not advect, which is where it started.
-  if (w < 4 * SEARCH || h < 4 * SEARCH || tiles.length > MAX_TILES) return null;
+  // Enough grid to correlate over, and a sane amount of work. Refusing is
+  // cheap in the sense that nothing breaks — but it is not free: the loop then
+  // dissolves each frame where it stands instead of carrying it, and that reads
+  // as the picture skipping rather than moving. So the bar is the smallest one
+  // the maths genuinely needs, not a comfortable margin above it.
+  if (Math.min(w, h) < MIN_GRID || tiles.length > MAX_TILES) return null;
+
+  // Held to a fraction of the grid so the furthest shift tested still overlaps
+  // its partner across most of the frame. On a one-tile grid that is nine cells
+  // either way, which at a 512px tile is a little over half the map — far more
+  // drift than an hour of weather produces at any zoom this map opens at.
+  const search = Math.max(3, Math.min(SEARCH_MAX, Math.floor(Math.min(w, h) * SEARCH_FRACTION)));
 
   const ga = assemble(tiles, a._signatures, minX, minY, w, h);
   const gb = assemble(tiles, b._signatures, minX, minY, w, h);
@@ -134,16 +167,18 @@ export function estimateShift(a, b) {
   if (echo / (2 * ga.length) < MIN_ECHO) return null;
 
   const still = ncc(ga, gb, w, h, 0, 0);
+  const full = w * h;
   let best = { r: -2, dx: 0, dy: 0 };
-  for (let dy = -SEARCH; dy <= SEARCH; dy++) {
-    for (let dx = -SEARCH; dx <= SEARCH; dx++) {
+  for (let dy = -search; dy <= search; dy++) {
+    for (let dx = -search; dx <= search; dx++) {
+      if ((w - Math.abs(dx)) * (h - Math.abs(dy)) < MIN_OVERLAP * full) continue;
       const r = ncc(ga, gb, w, h, dx, dy);
       if (r > best.r) best = { r, dx, dy };
     }
   }
   if (best.r < MIN_PEAK || best.r - still < MIN_GAIN) return null;
   // A peak hard against the edge of the search means the real one is outside it.
-  if (Math.abs(best.dx) === SEARCH || Math.abs(best.dy) === SEARCH) return null;
+  if (Math.abs(best.dx) === search || Math.abs(best.dy) === search) return null;
 
   const dxr = refine(
     ncc(ga, gb, w, h, best.dx - 1, best.dy),

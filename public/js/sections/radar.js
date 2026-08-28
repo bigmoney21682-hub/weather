@@ -273,7 +273,16 @@ export function radarSection() {
       return;
     }
     const shift = estimateShift(first, last);
-    motion = shift ? { x: shift.dx / span, y: shift.dy / span, z: shift.z } : null;
+    if (shift) {
+      motion = { x: shift.dx / span, y: shift.dy / span, z: shift.z };
+      return;
+    }
+    // No answer this time. Tiles are still landing through the first minute and
+    // the estimate sharpens as they do, so an early null is worth coming back
+    // for — settling for good would leave the loop dissolving frames where they
+    // stand, which is the skip this measurement exists to remove.
+    motion = null;
+    if (motionTries++ < 6) scheduleMotion(4000);
   }
 
   /** Stack a frame layer, skipping the write when it is already there. */
@@ -634,7 +643,17 @@ export function radarSection() {
       announcing = false;
       clearTimeout(progressTimer);
       progressTimer = null;
-      ui.error(`Radar unavailable: ${err.message}`, () => loadFrames());
+      // The five-minute refresh failing costs nothing the user can see: the
+      // frames already up are minutes old at worst and still looping, and the
+      // clock under them says how old. Throwing a banner over that reports a
+      // working radar as broken — which is what it was doing. So the error
+      // surfaces only when someone is actually waiting on this load, or when
+      // there is nothing behind the banner to look at.
+      if (announce || !loaded) {
+        ui.error(`Radar unavailable: ${err.message}`, () => loadFrames());
+      } else {
+        console.warn(`[radar] refresh failed, keeping the frames on screen: ${err.message}`);
+      }
     }
   }
 
