@@ -1,19 +1,36 @@
 // Leaflet setup shared by the radar, lightning and hurricane maps.
 //
 // Leaflet is vendored under /vendor/leaflet, so no map code is fetched from a
-// CDN. Basemap tiles come from CARTO's free raster service; only the tile
-// coordinates you look at are ever requested.
+// CDN. Basemap tiles come from Esri's ArcGIS Online canvas services; only the
+// tile coordinates you look at are ever requested.
+//
+// CARTO served these until it started stamping "API KEY REQUIRED" diagonally
+// across every keyless tile, which tiled the message over the whole map. Esri's
+// canvas basemaps are the like-for-like replacement: muted enough to sit under
+// radar and strike colours, and still keyless.
 
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas';
+const ESRI_ATTRIBUTION =
+  'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors';
+
+// The canvas services split the map in two: a base with no writing on it, and a
+// transparent reference layer carrying the place names. Both are needed to match
+// what CARTO's `*_all` styles drew in one pass.
 const BASEMAPS = {
   dark: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    base: `${ESRI}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+    labels: `${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
   },
   light: {
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    base: `${ESRI}/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+    labels: `${ESRI}/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
   },
 };
+
+// Esri's canvas tiles stop here — past it the service answers with a blank
+// placeholder rather than a 404, so Leaflet has to be told to stretch the last
+// real row instead of asking for the empty ones. The radar still zooms to 19.
+const BASEMAP_MAX_NATIVE_ZOOM = 16;
 
 /**
  * Create a map that is pinch-zoomable on touch and scroll-zoomable only after a
@@ -35,7 +52,11 @@ export function createMap(container, { center = [39, -98], zoom = 5, worldCopyJu
   });
 
   const base = BASEMAPS[theme] || BASEMAPS.dark;
-  L.tileLayer(base.url, { attribution: base.attribution, subdomains: 'abcd', maxZoom: 19, detectRetina: true }).addTo(map);
+  const tiles = { maxZoom: 19, maxNativeZoom: BASEMAP_MAX_NATIVE_ZOOM, detectRetina: true };
+  L.tileLayer(base.base, { ...tiles, attribution: ESRI_ATTRIBUTION }).addTo(map);
+  // Labels go on immediately after the base, so both sit below the radar frames
+  // and strike markers the sections add later.
+  L.tileLayer(base.labels, tiles).addTo(map);
 
   if (L.Browser.mobile) {
     // Re-enable one-finger dragging only once the user is clearly on the map.

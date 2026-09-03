@@ -95,7 +95,7 @@ There is no build, no bundler and no framework. Edit a file, reload the page.
 | Air quality | Open-Meteo Air Quality (CAMS) + NWS alerts |
 | Ocean quality | [USGS NWIS](https://waterservices.usgs.gov/) real-time gauges + NOAA Tides &amp; Currents + Open-Meteo + NWS alerts |
 | Geocoding | Zippopotam, Open-Meteo Geocoding, OpenStreetMap Nominatim |
-| Basemap | OpenStreetMap via CARTO |
+| Basemap | Esri ArcGIS Online canvas tiles (Esri, HERE, Garmin, OpenStreetMap) |
 
 None of them need an API key. Requests are cached in memory for as long as each
 feed stays fresh, so the page can refresh often without hammering anyone.

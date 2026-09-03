@@ -37,7 +37,7 @@ bare coordinate, attached to nothing.
 Two requests go directly from your browser rather than through the server, because
 that is how map tiles work:
 
-- **Map tiles** from CARTO/OpenStreetMap and radar tiles from RainViewer. These
+- **Map tiles** from Esri ArcGIS Online and radar tiles from RainViewer. These
   reveal the map squares you are looking at, which is inherent to any map.
 - Nothing else. There are no other outbound requests from the page.
 
