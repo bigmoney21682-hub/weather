@@ -184,7 +184,10 @@ export function surfSection() {
     const c = data.current || {};
     clear(stats).append(
       statTile('Wave height', f.ft(c.waveFt)),
-      statTile('Period', f.sec(c.periodS), c.dirDeg != null ? `${windArrow(c.dirDeg + 180)} from ${compass(c.dirDeg)}` : null),
+      // `dirDeg` is where the swell comes from; the arrow shows where it is
+      // headed — the way it runs at the beach — which is what windArrow draws
+      // from a "from" bearing unaided.
+      statTile('Period', f.sec(c.periodS), c.dirDeg != null ? `${windArrow(c.dirDeg)} from ${compass(c.dirDeg)}` : null),
       statTile('Swell', f.ft(c.swellFt), c.swellPeriodS ? `${Math.round(c.swellPeriodS)} s` : null),
       statTile('Water temp', f.tempF(data.waterTempF), data.waterTempSource),
     );
