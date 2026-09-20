@@ -41,7 +41,13 @@
   --hazardous: #ef4444;
 
   --chart-grid: rgba(255, 255, 255, 0.07);
+  /* A grid line that carries a label of its own — the noon rules on the surf
+     chart — has to stand out from the plain hour grid without shouting. */
+  --chart-grid-strong: rgba(255, 255, 255, 0.2);
   --chart-text: rgba(215, 226, 245, 0.55);
+  /* Surf below the height worth paddling out for: the same line, drained of
+     the colour that says "go". */
+  --surf-flat: #6f7f96;
   /* The "now" rule is a reference line, not a reading: deliberately neutral so
      it never reads as another series on the chart. */
   --chart-now: rgba(190, 202, 222, 0.6);
@@ -2269,7 +2275,9 @@ main > :nth-child(n + 6) { animation-delay: 0.2s; }
     --air: #7c5cf0;
     --ocean: #0e8fce;
     --chart-grid: rgba(16, 24, 40, 0.11);
+    --chart-grid-strong: rgba(16, 24, 40, 0.28);
     --chart-text: rgba(34, 45, 68, 0.78);
+    --surf-flat: #7b8aa1;
     --chart-now: rgba(58, 70, 92, 0.55);
     --shadow: 0 8px 28px rgba(16, 30, 60, 0.1);
     --shadow-lift: 0 16px 40px rgba(16, 30, 60, 0.16);

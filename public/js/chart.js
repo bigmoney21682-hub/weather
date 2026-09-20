@@ -65,12 +65,41 @@ function timeTicks(minMs, maxMs, width) {
   return out;
 }
 
+/**
+ * Break a polyline where it crosses `at`, inserting the exact crossing point so
+ * the two sides can be drawn in different colours without a visible step.
+ * Returns [{ above, pts }] in order.
+ */
+function splitAt(pts, at) {
+  const out = [];
+  let run = [pts[0]];
+  let above = pts[0].y >= at;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1];
+    const p = pts[i];
+    const nowAbove = p.y >= at;
+    if (nowAbove === above) {
+      run.push(p);
+      continue;
+    }
+    const f = (at - prev.y) / (p.y - prev.y);
+    const cross = { x: prev.x + (p.x - prev.x) * f, y: at };
+    run.push(cross);
+    out.push({ above, pts: run });
+    run = [cross, p];
+    above = nowAbove;
+  }
+  out.push({ above, pts: run });
+  return out;
+}
+
 export class TimeChart {
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {object} opts
-   *   series: [{ key, label, color, fill?, type?: 'line'|'area'|'bar', dashed?, axis?: 'left'|'right' }]
-   *   yLabel, y2Label, formatY, formatY2, formatTooltip
+   *   series: [{ key, label, color, fill?, type?: 'line'|'area'|'bar', dashed?, axis?: 'left'|'right',
+   *             split?: { at, above, below, fillAbove?, fillBelow? } }]
+   *   yLabel, y2Label, formatY, formatY2, formatTooltip, xTicks, guides
    */
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
@@ -83,6 +112,7 @@ export class TimeChart {
     this.hover = null;
     this.markers = opts.markers || [];
     this.bands = opts.bands || [];
+    this.guides = opts.guides || [];
 
     this._bind();
     this._ro = new ResizeObserver(() => this.resize());
@@ -166,6 +196,14 @@ export class TimeChart {
       }
     }
     if (!Number.isFinite(min)) return null;
+    // A value the axis must always cover — the surfable line, so that a flat
+    // week still shows how far under it the waves are.
+    if (axis === 'left') {
+      for (const v of this.opts.includeY || []) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
     if (min === max) {
       min -= 1;
       max += 1;
@@ -211,6 +249,7 @@ export class TimeChart {
 
     const css = getComputedStyle(document.documentElement);
     const grid = css.getPropertyValue('--chart-grid').trim() || 'rgba(255,255,255,.08)';
+    const gridStrong = css.getPropertyValue('--chart-grid-strong').trim() || 'rgba(255,255,255,.22)';
     const text = css.getPropertyValue('--chart-text').trim() || 'rgba(255,255,255,.55)';
 
     if (!this.series.length || !this.domain) {
@@ -268,19 +307,58 @@ export class TimeChart {
       }
     }
 
-    // Time axis.
-    ctx.textAlign = 'center';
+    // Time axis. A section can name its own ticks — the surf chart marks local
+    // noon each day — and gets the even-hour grid back whenever that yields
+    // nothing, which is what happens once you zoom inside a single day.
+    const asked = this.opts.xTicks ? this.opts.xTicks(this.domain[0], this.domain[1], pl.w) : null;
+    const ticks = asked?.length
+      ? asked
+      : timeTicks(this.domain[0], this.domain[1], pl.w).map((t) => ({
+          x: t,
+          label: this.opts.formatX ? this.opts.formatX(t) : `${new Date(t).getHours()}h`,
+        }));
     ctx.textBaseline = 'top';
-    ctx.fillStyle = text;
-    ctx.strokeStyle = grid;
-    for (const t of timeTicks(this.domain[0], this.domain[1], pl.w)) {
-      const x = Math.round(this.xToPx(t)) + 0.5;
+    for (const tick of ticks) {
+      const x = Math.round(this.xToPx(tick.x)) + 0.5;
       if (x < pl.x || x > pl.x + pl.w) continue;
+      ctx.strokeStyle = tick.strong ? gridStrong : grid;
+      ctx.lineWidth = tick.strong ? 1.25 : 1;
       ctx.beginPath();
       ctx.moveTo(x, pl.y);
       ctx.lineTo(x, pl.y + pl.h);
       ctx.stroke();
-      ctx.fillText(this.opts.formatX ? this.opts.formatX(t) : new Date(t).getHours() + 'h', x, pl.y + pl.h + 6);
+      if (!tick.label) continue;
+      // Labels at the ends would run off the canvas if they stayed centred.
+      ctx.textAlign = x < pl.x + 28 ? 'left' : x > pl.x + pl.w - 28 ? 'right' : 'center';
+      ctx.fillStyle = text;
+      ctx.fillText(tick.label, x, pl.y + pl.h + 6);
+    }
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+
+    // Horizontal reference lines, e.g. the height a wave has to reach before it
+    // is worth paddling out for. The label sits in the axis gutter with the
+    // tick labels, where no series can run through it.
+    for (const g of this.guides) {
+      const range = (g.axis || 'left') === 'right' ? right : left;
+      if (!range || g.y < range[0] || g.y > range[1]) continue;
+      const y = Math.round(yToPx(g.y, g.axis || 'left')) + 0.5;
+      ctx.strokeStyle = resolveColor(g.color || 'var(--chart-grid-strong)');
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pl.x, y);
+      ctx.lineTo(pl.x + pl.w, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (g.label) {
+        ctx.fillStyle = resolveColor(g.color || 'var(--chart-text)');
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(g.label, pl.x - 6, y);
+        ctx.font = '11px system-ui, sans-serif';
+      }
     }
 
     ctx.save();
@@ -306,37 +384,50 @@ export class TimeChart {
         continue;
       }
 
-      if (s.type === 'area' || s.fill) {
-        const grad = ctx.createLinearGradient(0, pl.y, 0, pl.y + pl.h);
-        grad.addColorStop(0, s.fill ? resolveColor(s.fill) : withAlpha(s.color, 0.33));
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(this.xToPx(pts[0].x), pl.y + pl.h);
-        for (const p of pts) ctx.lineTo(this.xToPx(p.x), yToPx(p.y, axis));
-        ctx.lineTo(this.xToPx(pts[pts.length - 1].x), pl.y + pl.h);
-        ctx.closePath();
-        ctx.fill();
+      // A split series is drawn as runs either side of a threshold, each in its
+      // own colour, so the line itself says whether the surf is worth it.
+      const runs = s.split ? splitAt(pts, s.split.at) : [{ above: null, pts }];
+      const runColor = (run) =>
+        run.above == null ? color : resolveColor(run.above ? s.split.above : s.split.below);
+      const runFill = (run) =>
+        run.above == null ? s.fill : run.above ? s.split.fillAbove : s.split.fillBelow;
+
+      if (s.type === 'area' || s.fill || s.split?.fillAbove || s.split?.fillBelow) {
+        for (const run of runs) {
+          const fill = runFill(run);
+          const grad = ctx.createLinearGradient(0, pl.y, 0, pl.y + pl.h);
+          grad.addColorStop(0, fill ? resolveColor(fill) : withAlpha(runColor(run), 0.33));
+          grad.addColorStop(1, 'transparent');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.moveTo(this.xToPx(run.pts[0].x), pl.y + pl.h);
+          for (const p of run.pts) ctx.lineTo(this.xToPx(p.x), yToPx(p.y, axis));
+          ctx.lineTo(this.xToPx(run.pts[run.pts.length - 1].x), pl.y + pl.h);
+          ctx.closePath();
+          ctx.fill();
+        }
       }
 
-      ctx.strokeStyle = color;
       ctx.lineWidth = s.width || 2;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.setLineDash(s.dashed ? [5, 4] : []);
-      ctx.beginPath();
-      pts.forEach((p, i) => {
-        const x = this.xToPx(p.x);
-        const y = yToPx(p.y, axis);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+      for (const run of runs) {
+        ctx.strokeStyle = runColor(run);
+        ctx.beginPath();
+        run.pts.forEach((p, i) => {
+          const x = this.xToPx(p.x);
+          const y = yToPx(p.y, axis);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
       ctx.setLineDash([]);
 
       if (s.dots && pts.length <= 60) {
-        ctx.fillStyle = color;
         for (const p of pts) {
+          ctx.fillStyle = this._colorFor(s, p.y);
           ctx.beginPath();
           ctx.arc(this.xToPx(p.x), yToPx(p.y, axis), 2.5, 0, Math.PI * 2);
           ctx.fill();
@@ -371,6 +462,12 @@ export class TimeChart {
     if (this.hover) this._drawHover();
   }
 
+  /** The colour a value is drawn in, honouring a split series' threshold. */
+  _colorFor(s, y) {
+    if (!s.split) return resolveColor(s.color);
+    return resolveColor(y >= s.split.at ? s.split.above : s.split.below);
+  }
+
   _drawHover() {
     const ctx = this.ctx;
     const pl = this.plot;
@@ -399,7 +496,7 @@ export class TimeChart {
     ctx.stroke();
 
     for (const r of rows) {
-      ctx.fillStyle = resolveColor(r.s.color);
+      ctx.fillStyle = this._colorFor(r.s, r.p.y);
       ctx.beginPath();
       ctx.arc(snapX, this._yToPx(r.p.y, r.s.axis || 'left'), 3.5, 0, Math.PI * 2);
       ctx.fill();
@@ -427,7 +524,7 @@ export class TimeChart {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     lines.forEach((line, i) => {
-      ctx.fillStyle = i === 0 ? 'rgba(255,255,255,.65)' : resolveColor(rows[i - 1].s.color);
+      ctx.fillStyle = i === 0 ? 'rgba(255,255,255,.65)' : this._colorFor(rows[i - 1].s, rows[i - 1].p.y);
       ctx.font = i === 0 ? '10px system-ui, sans-serif' : '11px system-ui, sans-serif';
       ctx.fillText(line, bx + 8, by + 6 + i * 15);
     });

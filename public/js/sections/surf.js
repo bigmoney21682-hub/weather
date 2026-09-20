@@ -1,4 +1,4 @@
-// Surf: wave height, period, water temperature, the tide table, and which beach
+// Surf: wave height, water temperature, the tide table, and which beach
 // up or down the coast has the biggest swell on it right now.
 
 import { api, el, clear, f, clock } from '../util.js';
@@ -6,6 +6,52 @@ import { createSection, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
 import { compass, windArrow } from '../icons.js';
 import { onLocation, getLocation } from '../store.js';
+
+// Above this the waves are worth paddling out for; below it the chart says so
+// by draining the colour out of the line.
+const SURFABLE_FT = 2.5;
+
+// Local noon, in the beach's own timezone, of the day an instant falls in.
+// Read the wall clock there, ask for noon on that date, and convert back —
+// twice, because the offset at noon can differ from the offset at `ms` on the
+// mornings the clocks change.
+function tzOffset(ms, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+    .formatToParts(ms)
+    .reduce((o, part) => ((o[part.type] = part.value), o), {});
+  const wall = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
+  // Zone offsets are whole minutes; rounding drops the milliseconds `ms` carries
+  // so that noon comes back as noon exactly, and today's rule compares equal.
+  return Math.round((wall - ms) / 6e4) * 6e4;
+}
+
+function localNoon(ms, tz) {
+  const local = new Date(ms + tzOffset(ms, tz));
+  const midday = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 12);
+  return midday - tzOffset(midday - tzOffset(ms, tz), tz);
+}
+
+/** Noon of every day the visible window touches, labelled for the axis. */
+function noonTicks(fromMs, toMs, tz) {
+  const out = [];
+  const today = localNoon(Date.now(), tz);
+  for (let t = localNoon(fromMs, tz); t <= toMs; t = localNoon(t + 30 * 36e5, tz)) {
+    if (t < fromMs) continue;
+    const day = t === today ? 'Today' : new Date(t).toLocaleDateString([], { weekday: 'short', timeZone: tz });
+    out.push({ x: t, label: `${day} 12pm`, strong: true });
+    if (out.length > 30) break;
+  }
+  return out;
+}
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><path d="M2 16c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2" stroke="var(--surf)" stroke-width="2" stroke-linecap="round"/><path d="M2 20c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2" stroke="var(--surf)" stroke-width="2" stroke-linecap="round" opacity=".55"/><path d="M6 11c2-6 8-8 12-6-3 0-5 2-6 4" stroke="var(--surf)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 
@@ -49,8 +95,8 @@ export function surfSection() {
     el(
       'div',
       { class: 'chart-legend' },
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--surf)' }), 'Wave height (ft)'),
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'Swell period (s)'),
+      el('span', { class: 'key' }, el('i', { style: 'background:var(--surf)' }), `Surfable (${SURFABLE_FT}ft+)`),
+      el('span', { class: 'key' }, el('i', { style: 'background:var(--surf-flat)' }), `Too small (under ${SURFABLE_FT}ft)`),
       el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
     ),
     biggestBox,
@@ -63,9 +109,15 @@ export function surfSection() {
     height: 220,
     zeroBased: true,
     formatY: (v) => v.toFixed(1),
-    formatY2: (v) => `${Math.round(v)}s`,
     formatX: (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', timeZone: tz }).replace(',', ''),
     formatTooltipTitle: (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', timeZone: tz }),
+    // One labelled rule per day at noon. Zoomed inside a day no noon is in
+    // view, and the chart falls back to its own hour grid.
+    xTicks: (from, to) => (tz ? noonTicks(from, to, tz) : null),
+    guides: [{ y: SURFABLE_FT, color: 'var(--surf)', label: `${SURFABLE_FT}` }],
+    // Keep the surfable line on the chart even on a flat week, so a low line
+    // reads as "well under it" rather than as an unexplained grey.
+    includeY: [SURFABLE_FT],
   });
 
   // A spot searched here overrides the page location for this section only,
@@ -218,19 +270,16 @@ export function surfSection() {
 
     chart.setData([
       {
-        key: 'period',
-        label: 'Swell period',
-        color: 'var(--gust)',
-        axis: 'right',
-        dashed: true,
-        points: data.hourly.map((h) => ({ x: h.epoch * 1000, y: h.swellPeriodS ?? h.periodS })),
-        format: (v) => `${Math.round(v)} s`,
-      },
-      {
         key: 'wave',
         label: 'Wave height',
         color: 'var(--surf)',
-        fill: 'rgba(93,225,201,.28)',
+        split: {
+          at: SURFABLE_FT,
+          above: 'var(--surf)',
+          below: 'var(--surf-flat)',
+          fillAbove: 'rgba(93,225,201,.28)',
+          fillBelow: 'rgba(111,127,150,.22)',
+        },
         points: data.hourly.map((h) => ({ x: h.epoch * 1000, y: h.waveFt })),
         format: (v) => `${v.toFixed(1)} ft`,
       },
