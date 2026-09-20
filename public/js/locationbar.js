@@ -133,6 +133,18 @@ export function locationBar() {
     follow.querySelector('.btn-label').textContent = on ? 'Following' : 'Follow me';
   });
 
+  // The lamp on this button is a claim about what the page is showing, not a
+  // record of a button once pressed: it burns only while the place on screen is
+  // a fix this device handed over. Searching, or tapping a saved pill, is the
+  // user saying "show me somewhere else", and the lamp goes out with it.
+  onLocation((place) => {
+    const here = Boolean(place?.device);
+    gps.classList.toggle('on', here);
+    gps.title = here
+      ? 'Showing this device\u2019s location \u2014 tap for a fresh fix'
+      : 'Use this device\u2019s location';
+  });
+
   onLocation((place) => {
     clear(current);
     if (!place) {

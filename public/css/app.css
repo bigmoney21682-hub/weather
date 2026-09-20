@@ -567,19 +567,20 @@ main {
   font-weight: 650;
 }
 
-.gps-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--radar);
-  box-shadow: 0 0 0 3px rgba(103, 232, 162, 0.22);
-}
-
+/* Both lamps start dark and are lit by `.btn.on`, so a green dot on this bar
+   always means the state it names is true right now. */
+.gps-dot,
 .follow-dot {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   border: 2px solid var(--ink-faint);
+}
+
+.btn.on .gps-dot {
+  border-color: var(--radar);
+  background: var(--radar);
+  box-shadow: 0 0 0 3px rgba(103, 232, 162, 0.22);
 }
 
 /* Following is a state the phone is in, not a button that was pressed, so it

@@ -255,6 +255,10 @@ async function describePlace(lat, lon, accuracyM) {
     /* keep the coordinate label */
   }
   place.accuracyM = Math.round(accuracyM);
+  // Says this place is where the device just reported itself to be, as opposed
+  // to somewhere picked by hand. A saved pill never carries it, so tapping one
+  // puts the "use my location" light out even when the pill was born of a fix.
+  place.device = true;
   return place;
 }
 
