@@ -8,6 +8,7 @@ import { api, metersBetween } from './util.js';
 
 const KEY = 'weather.location.v1';
 const SAVED_KEY = 'weather.places.v1';
+const DEVICE_KEY = 'weather.devicefix.v1';
 const listeners = new Set();
 const savedListeners = new Set();
 
@@ -108,6 +109,27 @@ export function getDefaultPlace() {
 
 export { placeId };
 
+/* ------------------------------------------------------------ device fix -- */
+
+// Where this device last reported itself to be, kept as a place id rather than
+// as a flag on the place. A flag would have to ride along into the saved pill,
+// and that pill would then go on claiming to be the device's location for as
+// long as it existed — green over a town the phone left months ago. An id is a
+// question instead of a claim: the lamp is lit while the place on screen is
+// that place, which survives a reload and still goes out the moment the user
+// looks somewhere else.
+let deviceFixId = read(DEVICE_KEY, null);
+
+function rememberDeviceFix(place) {
+  deviceFixId = placeId(place);
+  write(DEVICE_KEY, deviceFixId);
+}
+
+/** Is `place` where this device last put us? */
+export function isDeviceFix(place) {
+  return Boolean(place && deviceFixId && placeId(place) === deviceFixId);
+}
+
 // A starred place is where the page opens, every time. Without one, it picks up
 // wherever the last visit left off.
 const preferred = getDefaultPlace();
@@ -140,6 +162,11 @@ export function setLocation(place) {
 }
 
 export function clearLocation() {
+  // The privacy note at the top of this file promises the ✕ takes the location
+  // off this device. The remembered fix is a coordinate like any other, so it
+  // goes with it rather than outliving the thing it describes.
+  deviceFixId = null;
+  write(DEVICE_KEY, null);
   setLocation(null);
 }
 
@@ -255,10 +282,7 @@ async function describePlace(lat, lon, accuracyM) {
     /* keep the coordinate label */
   }
   place.accuracyM = Math.round(accuracyM);
-  // Says this place is where the device just reported itself to be, as opposed
-  // to somewhere picked by hand. A saved pill never carries it, so tapping one
-  // puts the "use my location" light out even when the pill was born of a fix.
-  place.device = true;
+  rememberDeviceFix(place);
   return place;
 }
 
