@@ -91,15 +91,13 @@ export function surfSection() {
   const tideBox = el('div', { class: 'tides' });
   const tideHead = el('h4', { class: 'sub-head', text: 'Tides' });
   const biggestBox = el('div', { class: 'biggest' });
-  const pillBox = el('div', { class: 'spot-pills' });
   const savedBox = el('div', { class: 'place-pills surf-saved' });
   const reportBox = el('div', { class: 'surf-report' });
   const forecastBox = el('div', { class: 'surf-report' });
 
   clear(ui.body).append(
     savedBox,
-    pillBox,
-    // Tides sit right under the spot list: when the tide turns is the first
+    // Tides sit right under the saved spots: when the tide turns is the first
     // thing asked of a beach, before the swell numbers.
     tideHead,
     tideBox,
@@ -143,8 +141,7 @@ export function surfSection() {
   // A spot searched here overrides the page location for this section only,
   // until "Use my location" puts it back in sync.
   let override = null;
-  // A spot chosen from the pills. It moves which beach is reported on, but not
-  // which beaches are offered — the row is anchored on the one nearest home.
+  // A spot chosen from the biggest-wave callout, or a saved pill on its break.
   let selected = null;
   let place = null;
   let token = 0;
@@ -276,37 +273,6 @@ export function surfSection() {
     }
   }
 
-  /**
-   * The spots up and down the coast, in the order you would drive them.
-   *
-   * They run in one column from one end of the coast to the other rather than
-   * in two lists either side of "here", because that is how a surfer already
-   * holds the coast in their head — up-coast at the top, like a map, and the
-   * labelled ends say which way is which.
-   */
-  function renderPills(data) {
-    clear(pillBox);
-    if (!data.nearby?.length) return;
-
-    const ends = data.shoreEnds || { forward: 'North', back: 'South' };
-    pillBox.append(el('span', { class: 'spot-end', text: `${ends.forward} ↑` }));
-    for (const spot of [...data.nearby].reverse()) {
-      const pill = el('button', {
-        class: `chip${spot.selected ? ' active' : ''}`,
-        type: 'button',
-        title: `Surf report for ${spot.name} — ${f.miles(spot.distanceMiles)} from ${place.label}`,
-        'aria-pressed': spot.selected ? 'true' : 'false',
-      });
-      pill.append(
-        el('span', { class: 'pill-name', text: spot.name }),
-        el('span', { class: 'pill-dist', text: f.miles(spot.distanceMiles) }),
-      );
-      pill.addEventListener('click', () => selectSpot(spot));
-      pillBox.append(pill);
-    }
-    pillBox.append(el('span', { class: 'spot-end', text: `↓ ${ends.back}` }));
-  }
-
   function render(data) {
     tz = data.timezone || undefined;
     // The card reports on a beach, not on the town in the location bar.
@@ -324,8 +290,6 @@ export function surfSection() {
     // Everything below that needs to point at somewhere named falls back to the
     // location bar when the beach lookup came up empty.
     const spotName = data.spot?.name || place.label;
-
-    renderPills(data);
 
     const c = data.current || {};
     clear(stats).append(
