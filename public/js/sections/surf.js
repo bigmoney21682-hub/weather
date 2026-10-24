@@ -94,17 +94,17 @@ export function surfSection() {
   const pillBox = el('div', { class: 'spot-pills' });
   const savedBox = el('div', { class: 'place-pills surf-saved' });
   const reportBox = el('div', { class: 'surf-report' });
+  const forecastBox = el('div', { class: 'surf-report' });
 
   clear(ui.body).append(
     savedBox,
     pillBox,
-    stats,
-    // The numbers above, said in words — then the forecaster's own.
-    reportBox,
-    // Tides sit right under the swell and water-temp tiles: they are part of
-    // the same "should I paddle out?" glance, not an appendix.
+    // Tides sit right under the spot list: when the tide turns is the first
+    // thing asked of a beach, before the swell numbers.
     tideHead,
     tideBox,
+    stats,
+    // The swell numbers drawn out over the next few days, ahead of the words.
     el('h4', { class: 'sub-head', text: 'Wave height forecast' }),
     expandableBox(
       holder,
@@ -116,6 +116,9 @@ export function surfSection() {
         el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
       ),
     ),
+    // The chart said in words: right now, the days ahead, then the forecaster's own.
+    reportBox,
+    forecastBox,
     biggestBox,
   );
 
@@ -276,17 +279,18 @@ export function surfSection() {
   /**
    * The spots up and down the coast, in the order you would drive them.
    *
-   * They run in one row from one end of the coast to the other rather than in
-   * two lists either side of "here", because that is how a surfer already holds
-   * the coast in their head — and the labelled ends say which way is which.
+   * They run in one column from one end of the coast to the other rather than
+   * in two lists either side of "here", because that is how a surfer already
+   * holds the coast in their head — up-coast at the top, like a map, and the
+   * labelled ends say which way is which.
    */
   function renderPills(data) {
     clear(pillBox);
     if (!data.nearby?.length) return;
 
     const ends = data.shoreEnds || { forward: 'North', back: 'South' };
-    pillBox.append(el('span', { class: 'spot-end', text: `↓ ${ends.back}` }));
-    for (const spot of data.nearby) {
+    pillBox.append(el('span', { class: 'spot-end', text: `${ends.forward} ↑` }));
+    for (const spot of [...data.nearby].reverse()) {
       const pill = el('button', {
         class: `chip${spot.selected ? ' active' : ''}`,
         type: 'button',
@@ -300,13 +304,7 @@ export function surfSection() {
       pill.addEventListener('click', () => selectSpot(spot));
       pillBox.append(pill);
     }
-    pillBox.append(el('span', { class: 'spot-end', text: `${ends.forward} ↑` }));
-
-    // Open on the spot you are actually at, however far along the row it sits.
-    // Scrolling the strip by hand rather than with scrollIntoView, which would
-    // also drag the page down to a card the reader may not have got to yet.
-    const active = pillBox.querySelector('.chip.active');
-    if (active) pillBox.scrollLeft = active.offsetLeft - (pillBox.clientWidth - active.offsetWidth) / 2;
+    pillBox.append(el('span', { class: 'spot-end', text: `↓ ${ends.back}` }));
   }
 
   function render(data) {
@@ -414,9 +412,13 @@ export function surfSection() {
     }
   }
 
-  /** The written report, and the local NWS office's surf forecast under it. */
+  /**
+   * The written report above the chart; the day-by-day forecast and the local
+   * NWS office's surf forecast below it.
+   */
   function renderReport(data) {
     clear(reportBox);
+    clear(forecastBox);
     const r = data.report;
     const z = data.zoneForecast;
     if (!r && !z) return;
@@ -429,7 +431,7 @@ export function surfSection() {
         r.hasWind ? null : el('p', { class: 'fine-print', text: 'No wind forecast reached this spot, so the surface conditions are left out.' }),
       );
       if (r.days.length) {
-        mount(reportBox,
+        mount(forecastBox,
           el('h4', { class: 'sub-head', text: 'Surf forecast' }),
           el(
             'div',
@@ -476,7 +478,7 @@ export function surfSection() {
           el('a', { href: z.link, target: '_blank', rel: 'noopener noreferrer', text: 'Full text' }),
         ),
       );
-      mount(reportBox,box);
+      mount(forecastBox,box);
     }
   }
 
