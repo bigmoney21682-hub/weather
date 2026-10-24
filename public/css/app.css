@@ -1524,6 +1524,11 @@ body.has-expanded-card {
   transition: transform 0.3s ease, color 0.3s ease;
 }
 
+/* While playing, each frame sets the arrows itself; a transition would lag them. */
+.wind-map.is-playing .wind-map-arrow svg {
+  transition: none;
+}
+
 .wind-map-time {
   min-width: 78px;
 }

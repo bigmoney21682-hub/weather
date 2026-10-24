@@ -9,8 +9,15 @@ One thing: the location you set, in this browser's `localStorage` under
 `weather.location.v1`. It holds a latitude, a longitude, and a label like
 "Nags Head, North Carolina".
 
-Clearing it (the ✕ in the location bar) deletes it from the device. Nothing else
-persists — no history of what you looked at, no session, no identifier.
+Clearing it (the ✕ in the location bar) deletes it from the device.
+
+The wind map also keeps the forecasts it has fetched, under `weather.windfield.v1`,
+so a reload does not ask Open-Meteo for the same arrows again. It holds wind numbers
+for points on an evenly spaced map grid — which does show roughly what part of the
+map you looked at — and nothing else. Each entry is thrown away after two hours,
+it never leaves the device, and clearing the site's data removes it.
+
+Nothing else persists — no history of what you looked at, no session, no identifier.
 
 ## What is not stored
 
@@ -64,7 +71,8 @@ survives a reload, and any deliberate choice of another place turns it off.
 
 ## Verifying this yourself
 
-- `grep -r "localStorage" public/js` — one key, in `public/js/store.js`.
+- `grep -r "localStorage" public/js` — the location in `public/js/store.js`, and the
+  wind map's forecast cache in `public/js/windfield.js`.
 - Open the browser's network tab: the only hosts are your server, the tile hosts, and
   Open-Meteo for the wind map.
 - `server.js` writes no request log; the only file the app ever writes is

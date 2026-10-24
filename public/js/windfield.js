@@ -9,8 +9,11 @@
 // panning back, or zooming in and out, finds most arrows already fetched.
 //
 // Every arrow is one point of the viewer's own Open-Meteo allowance, so they
-// load on their own only within REACH_MILES of the state. Past that, the map
+// load on their own only within reach of the state (100 miles, and further
+// where the server says so — the Bahamas, for Florida). Past that, the map
 // keeps whatever it already has and offers a button to load the view by hand.
+// What has been fetched is kept in this browser for a couple of hours, so a
+// reload or a return visit costs nothing.
 
 import { api, el } from './util.js';
 import { createMap, homeMarker, observeSize } from './map.js';
@@ -32,10 +35,14 @@ const LATTICE_MAX_ZOOM = 9;
 // few thousand on the map, every one a request; past this the lattice steps
 // to a coarser level, so a bigger map gets wider spacing rather than more.
 const MAX_ARROWS = 350;
-// How far past the state's edge arrows load without being asked.
-const REACH_MILES = 100;
-
-const PLAY_STEP_MS = 650;
+// Playback, in hours of forecast per second of screen. The arrows glide
+// between hours rather than ticking, so these can be quick without strobing.
+const SPEEDS = [
+  { label: '1×', hoursPerSecond: 4 },
+  { label: '0.5×', hoursPerSecond: 2 },
+];
+// A beat on the last hour before the loop starts over, so the end reads as an end.
+const END_HOLD_MS = 700;
 
 // mph -> colour, calm to violent. Stops sit where the experience changes:
 // barely felt, a breeze, small-craft territory, hard to stand in.
@@ -65,12 +72,60 @@ function speedColor(mph) {
 // the server's IP is shared with strangers who spend its allowance; from here
 // it counts against the viewer's own. See PRIVACY.md.
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
-const POINT_TTL_MS = 30 * 60 * 1000;
+// The models behind Open-Meteo run every hour to every six, and a forecast
+// fetched two hours ago still holds every hour from now on, so this is as
+// fresh as the arrows need to be.
+const POINT_TTL_MS = 2 * 3600e3;
 // Points per request. Open-Meteo takes far more, but a long URL is the first
 // thing a proxy refuses, and smaller batches let the nearest arrows land first.
 const BATCH = 150;
 
+// Kept in localStorage so a reload, or coming back later in the afternoon,
+// does not spend the allowance again on arrows already fetched. Only forecast
+// numbers for points on a map grid — see PRIVACY.md. Capped so it never
+// crowds out the location the rest of the page depends on.
+const STORE_KEY = 'weather.windfield.v1';
+const STORE_MAX_POINTS = 1500;
+
 const pointCache = new Map(); // lattice key -> { lat, lon, start, mph, gust, dir, tz, fetched }
+
+(function restore() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY));
+    const now = Date.now();
+    for (const [key, point] of Object.entries(saved?.points || {})) {
+      if (now - point.fetched < POINT_TTL_MS && Array.isArray(point.dir)) pointCache.set(key, point);
+    }
+  } catch {
+    /* corrupt or unavailable storage — start empty */
+  }
+})();
+
+let saveTimer = null;
+
+/** Write the cache back, newest points first, dropping what has expired. */
+function persist() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const now = Date.now();
+    const fresh = [...pointCache.entries()]
+      .filter(([, p]) => now - p.fetched < POINT_TTL_MS)
+      .sort((a, b) => b[1].fetched - a[1].fetched);
+    for (let keep = Math.min(fresh.length, STORE_MAX_POINTS); keep > 0; keep = Math.floor(keep / 2)) {
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify({ points: Object.fromEntries(fresh.slice(0, keep)) }));
+        return;
+      } catch {
+        /* over the storage quota — try again with half as many */
+      }
+    }
+    try {
+      localStorage.removeItem(STORE_KEY);
+    } catch {
+      /* storage unavailable altogether */
+    }
+  }, 500);
+}
 
 /** Fetch hourly wind for `points` ({ key, lat, lon }) into the cache. */
 async function fetchPoints(points) {
@@ -101,10 +156,21 @@ async function fetchPoints(points) {
       fetched,
     });
   });
+  persist();
 }
 
 /** A point's value of `series` at instant `ms`, or null outside its hours. */
 const at = (point, series, ms) => point[series][Math.round((ms - point.start) / 3600e3)] ?? null;
+
+/** `a` to `b` by fraction `t`, or whichever one exists. */
+const lerp = (a, b, t) => (a == null ? b : b == null ? a : a + (b - a) * t);
+
+/** Compass bearing `a` to `b` by fraction `t`, the short way round. */
+function lerpAngle(a, b, t) {
+  if (a == null || b == null) return a ?? b;
+  const delta = ((b - a + 540) % 360) - 180;
+  return a + delta * t;
+}
 
 /** Local calendar date in `tz` as 'YYYY-MM-DD'. */
 const localDate = (ms, tz) => new Date(ms).toLocaleDateString('en-CA', { timeZone: tz });
@@ -127,6 +193,7 @@ export function windField() {
   const mapEl = el('div', { class: 'map map-tall', id: 'wind-map' });
   const timeLabel = el('span', { class: 'frame-time wind-map-time', text: '—' });
   const playBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Play', text: '▶' });
+  const speedBtn = el('button', { class: 'chip', type: 'button', text: SPEEDS[0].label, title: 'Playback speed' });
   const scrub = el('input', { type: 'range', class: 'scrub', min: '0', max: '0', step: '1', value: '0', 'aria-label': 'Forecast hour' });
   const nowBtn = el('button', { class: 'chip', type: 'button', text: 'Now' });
   const recenter = el('button', { class: 'chip', type: 'button', text: 'Recenter' });
@@ -145,7 +212,7 @@ export function windField() {
       playBtn,
       scrub,
       timeLabel,
-      el('div', { class: 'control-group' }, nowBtn, recenter, loadHere, expandBtn),
+      el('div', { class: 'control-group' }, speedBtn, nowBtn, recenter, loadHere, expandBtn),
     ),
     el(
       'div',
@@ -164,13 +231,18 @@ export function windField() {
   let place = null;
   let geometry = null; // { area: { bounds, center }, timezone }
   let reach = null; // L.LatLngBounds arrows load inside unasked
+  // Position along `hours`, fractional while playing: 2.5 is half past the third hour.
+  let cursor = 0;
+  let speed = 0;
+  let raf = null;
+  let lastTs = 0;
+  let holdUntil = 0;
   let tz; // undefined reads in the browser's own zone until one is known
   let hours = [];
   const markers = new Map(); // lattice key -> marker on screen
   const pending = new Set(); // lattice keys being fetched
   let token = 0;
   let moveTimer = null;
-  let playTimer = null;
 
   function setStatus(text) {
     status.textContent = text || '';
@@ -240,7 +312,7 @@ export function windField() {
       keyboard: false,
     }).addTo(layer);
     marker.bindTooltip(() => {
-      const ms = hours[Number(scrub.value)];
+      const ms = hours[Math.round(cursor)];
       const mph = at(point, 'mph', ms);
       const gust = at(point, 'gust', ms);
       return `${compass(at(point, 'dir', ms))} ${mph ?? '—'} mph${gust != null ? ` · gusts ${gust}` : ''}`;
@@ -250,19 +322,37 @@ export function windField() {
     return marker;
   }
 
+  /**
+   * Draw one arrow at `cursor`, blending the hours either side of it.
+   *
+   * The rotation is kept unwrapped per arrow and only ever moved by the short
+   * way round, so a wind backing from 350° to 10° turns twenty degrees rather
+   * than spinning the other three hundred and forty — which is what made the
+   * old hour-by-hour ticks lurch.
+   */
   function paint(marker, point) {
     const glyph = marker.getElement()?.firstElementChild;
     if (!glyph) return;
-    const ms = hours[Number(scrub.value)];
-    const dir = at(point, 'dir', ms);
-    const mph = at(point, 'mph', ms);
-    glyph.style.transform = `rotate(${(dir ?? 0) + 180}deg) scale(${0.8 + Math.min(mph ?? 0, 40) / 80})`;
+    const i = Math.floor(cursor);
+    const t = cursor - i;
+    const a = hours[i];
+    const b = hours[Math.min(i + 1, hours.length - 1)];
+    const dir = lerpAngle(at(point, 'dir', a), at(point, 'dir', b), t);
+    const mph = lerp(at(point, 'mph', a), at(point, 'mph', b), t);
+    if (dir == null) {
+      glyph.style.visibility = 'hidden';
+      return;
+    }
+    const target = dir + 180;
+    const prev = marker._rot ?? target;
+    marker._rot = prev + (((target - prev + 540) % 360) - 180);
+    glyph.style.transform = `rotate(${marker._rot.toFixed(1)}deg) scale(${(0.8 + Math.min(mph ?? 0, 40) / 80).toFixed(3)})`;
     glyph.style.color = speedColor(mph);
-    glyph.style.visibility = dir == null ? 'hidden' : '';
+    glyph.style.visibility = '';
   }
 
   function show() {
-    const i = Number(scrub.value);
+    const i = Math.round(cursor);
     timeLabel.textContent =
       i === 0
         ? 'Now'
@@ -274,11 +364,12 @@ export function windField() {
   }
 
   function setHours() {
-    const keep = hours[Number(scrub.value)];
+    const keep = hours[Math.round(cursor)];
     hours = hoursAhead(tz);
     scrub.max = String(hours.length - 1);
     const i = hours.indexOf(keep);
-    scrub.value = String(i < 0 ? 0 : i);
+    cursor = i < 0 ? 0 : i;
+    scrub.value = String(cursor);
   }
 
   /** Until the server names the zone, take it from the arrow nearest home. */
@@ -323,6 +414,8 @@ export function windField() {
 
     const now = Date.now();
     const missing = [];
+    const onScreen = map.getBounds();
+    let inView = 0;
     let outOfReach = 0;
     for (const p of wanted) {
       const cached = pointCache.get(p.key);
@@ -332,12 +425,14 @@ export function windField() {
         // already on its way
       } else if (manual || reach.contains([p.lat, p.fetchLon])) {
         missing.push(p);
-      } else {
+      } else if (onScreen.contains([p.lat, p.lon])) {
         outOfReach++;
       }
+      if (onScreen.contains([p.lat, p.lon])) inView++;
     }
-    const reachNote = outOfReach
-      ? `Arrows load on their own within ${REACH_MILES} miles of ${geometry.area.name || 'your area'}. Tap “Load arrows here” for the rest of this view.`
+    // A sliver past the edge of the opening view is not worth a note.
+    const reachNote = outOfReach > inView * 0.25
+      ? `Arrows load on their own within about 100 miles of ${geometry.area.name || 'your area'}. Tap “Load arrows here” for the rest of this view.`
       : '';
     if (!missing.length) {
       if (!pending.size) setStatus(reachNote);
@@ -374,22 +469,46 @@ export function windField() {
   }
 
   function stop() {
-    clearInterval(playTimer);
-    playTimer = null;
+    cancelAnimationFrame(raf);
+    raf = null;
+    node.classList.remove('is-playing');
     playBtn.textContent = '▶';
     playBtn.setAttribute('aria-label', 'Play');
   }
 
+  /** Advance the cursor by real time and redraw every arrow, once per frame. */
+  function tick(ts) {
+    const dt = lastTs ? Math.min(ts - lastTs, 100) : 0; // a background tab resumes, it does not leap
+    lastTs = ts;
+    const last = hours.length - 1;
+    if (holdUntil) {
+      if (ts >= holdUntil) {
+        holdUntil = 0;
+        cursor = 0;
+      }
+    } else {
+      cursor += (dt / 1000) * SPEEDS[speed].hoursPerSecond;
+      if (cursor >= last) {
+        cursor = last;
+        holdUntil = ts + END_HOLD_MS;
+      }
+    }
+    scrub.value = String(Math.round(cursor));
+    onHour();
+    raf = requestAnimationFrame(tick);
+  }
+
   function play() {
     if (hours.length < 2) return;
-    if (Number(scrub.value) >= hours.length - 1) scrub.value = '0';
+    if (cursor >= hours.length - 1) cursor = 0;
+    // Frame-by-frame painting does its own easing; the CSS transition meant for
+    // a single scrub step would only drag every frame behind.
+    node.classList.add('is-playing');
     playBtn.textContent = '❚❚';
     playBtn.setAttribute('aria-label', 'Pause');
-    playTimer = setInterval(() => {
-      const next = Number(scrub.value) + 1;
-      scrub.value = String(next > hours.length - 1 ? 0 : next);
-      onHour();
-    }, PLAY_STEP_MS);
+    lastTs = 0;
+    holdUntil = 0;
+    raf = requestAnimationFrame(tick);
   }
 
   function onHour() {
@@ -398,13 +517,19 @@ export function windField() {
     for (const marker of markers.values()) if (marker.isTooltipOpen()) marker.getTooltip().update();
   }
 
-  playBtn.addEventListener('click', () => (playTimer ? stop() : play()));
+  playBtn.addEventListener('click', () => (raf ? stop() : play()));
+  speedBtn.addEventListener('click', () => {
+    speed = (speed + 1) % SPEEDS.length;
+    speedBtn.textContent = SPEEDS[speed].label;
+  });
   scrub.addEventListener('input', () => {
     stop();
+    cursor = Number(scrub.value);
     onHour();
   });
   nowBtn.addEventListener('click', () => {
     stop();
+    cursor = 0;
     scrub.value = '0';
     onHour();
   });
@@ -423,10 +548,8 @@ export function windField() {
         const g = await api('/api/windmap', { lat: place.lat, lon: place.lon });
         if (mine !== token) return;
         geometry = g;
-        const [s, w, n, e] = g.area.bounds;
-        const dLat = REACH_MILES / 69;
-        const dLon = REACH_MILES / (69 * Math.max(0.2, Math.cos((((s + n) / 2) * Math.PI) / 180)));
-        reach = L.latLngBounds([s - dLat, w - dLon], [n + dLat, e + dLon]);
+        const [s, w, n, e] = g.area.reach;
+        reach = L.latLngBounds([s, w], [n, e]);
         tz = g.timezone || undefined;
         setHours();
         ensureMap();
