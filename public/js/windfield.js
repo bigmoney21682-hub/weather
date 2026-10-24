@@ -33,6 +33,65 @@ function speedColor(mph) {
   return `rgb(${mix.join(',')})`;
 }
 
+// The one request on this page that goes straight from the browser to a
+// weather feed rather than through the server. Open-Meteo limits per IP, and
+// the server's IP is shared with strangers who spend its allowance; from here
+// it counts against the viewer's own. See PRIVACY.md.
+const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
+const FIELD_TTL_MS = 30 * 60 * 1000;
+const fieldCache = new Map(); // area bounds -> { expires, value }
+
+/**
+ * Hourly wind at every point of `geometry`, lined up on one clock.
+ *
+ * Each point's series starts at its own local midnight, so a state split
+ * between two zones — or a grid reaching into Gulf water Open-Meteo files under
+ * a nautical zone — does not line up by index. They are lined up by instant
+ * instead, over the hours every point has.
+ */
+async function fetchField(geometry) {
+  const key = geometry.area.bounds.join(',');
+  const hit = fieldCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.value;
+
+  const { points } = geometry;
+  const url =
+    `${OPEN_METEO}?latitude=${points.map((p) => p.lat).join(',')}` +
+    `&longitude=${points.map((p) => p.lon).join(',')}` +
+    `&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=mph` +
+    `&forecast_days=4&timeformat=unixtime&timezone=auto`;
+  const res = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer' });
+  const raw = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(raw?.reason || `Open-Meteo answered ${res.status}`);
+  const list = Array.isArray(raw) ? raw : [raw];
+  if (list.length !== points.length) throw new Error('Open-Meteo returned the wrong number of wind points');
+
+  const first = Math.max(...list.map((r) => r.hourly.time[0]));
+  const last = Math.min(...list.map((r) => r.hourly.time[r.hourly.time.length - 1]));
+  const times = [];
+  for (let t = first; t <= last; t += 3600) times.push(t * 1000);
+  const round = (v) => (v == null ? null : Math.round(v));
+  const along = (r, k) => {
+    const offset = r.hourly.time.indexOf(first);
+    return r.hourly[k].slice(offset, offset + times.length).map(round);
+  };
+
+  const value = {
+    area: geometry.area,
+    timezone: geometry.timezone || list[Math.floor(list.length / 2)].timezone,
+    times,
+    points: points.map((p, i) => ({
+      lat: p.lat,
+      lon: p.lon,
+      mph: along(list[i], 'wind_speed_10m'),
+      gust: along(list[i], 'wind_gusts_10m'),
+      dir: along(list[i], 'wind_direction_10m'),
+    })),
+  };
+  fieldCache.set(key, { expires: Date.now() + FIELD_TTL_MS, value });
+  return value;
+}
+
 /** Local calendar date in `tz` as 'YYYY-MM-DD'. */
 const localDate = (ms, tz) => new Date(ms).toLocaleDateString('en-CA', { timeZone: tz });
 
@@ -168,7 +227,9 @@ export function windField() {
       const mine = ++token;
       setStatus('Loading the wind map…');
       try {
-        const next = await api('/api/windmap', { lat: place.lat, lon: place.lon });
+        const geometry = await api('/api/windmap', { lat: place.lat, lon: place.lon });
+        if (mine !== token) return;
+        const next = await fetchField(geometry);
         if (mine !== token) return;
         data = next;
         render(place);

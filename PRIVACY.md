@@ -34,11 +34,18 @@ bare coordinate, attached to nothing.
 3. Answers come back and are cached in the server's memory for a few minutes so
    repeat views do not re-ask.
 
-Two requests go directly from your browser rather than through the server, because
-that is how map tiles work:
+A few requests go directly from your browser rather than through the server:
 
 - **Map tiles** from Esri ArcGIS Online and radar tiles from RainViewer. These
   reveal the map squares you are looking at, which is inherent to any map.
+- **The wind map's forecast** from Open-Meteo (`api.open-meteo.com`). Open-Meteo
+  limits requests per IP address, and the server's address is shared with other
+  services on the same host, which often use up the day's allowance — so your
+  browser asks instead. The request carries a grid of about a hundred evenly
+  spaced coordinates covering your whole state (or a ~250-mile box outside the
+  US), not your own coordinate, and like everything else it is sent with no
+  cookie and no referrer. Open-Meteo does see your IP address, as any site you
+  load does.
 - Nothing else. There are no other outbound requests from the page.
 
 If you use **"Use my location"**, the browser's geolocation permission gives the app
@@ -57,7 +64,8 @@ survives a reload, and any deliberate choice of another place turns it off.
 ## Verifying this yourself
 
 - `grep -r "localStorage" public/js` — one key, in `public/js/store.js`.
-- Open the browser's network tab: the only hosts are your server and the tile hosts.
+- Open the browser's network tab: the only hosts are your server, the tile hosts, and
+  Open-Meteo for the wind map.
 - `server.js` writes no request log; the only file the app ever writes is
   `.cache/noaa-tide-stations.json`, a public list of tide gauges with no user data
   in it.
