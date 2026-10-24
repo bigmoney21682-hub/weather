@@ -9,9 +9,12 @@
 // canvas basemaps are the like-for-like replacement: muted enough to sit under
 // radar and strike colours, and still keyless.
 
-const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas';
+const ESRI_ROOT = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+const ESRI = `${ESRI_ROOT}/Canvas`;
 const ESRI_ATTRIBUTION =
   'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors';
+const ESRI_IMAGERY_ATTRIBUTION =
+  'Imagery &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, Maxar, Earthstar Geographics, USDA, USGS';
 
 // The canvas services split the map in two: a base with no writing on it, and a
 // transparent reference layer carrying the place names. Both are needed to match
@@ -24,6 +27,14 @@ const BASEMAPS = {
   light: {
     base: `${ESRI}/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
     labels: `${ESRI}/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+  },
+  // Same keyless service, photographic. The reference layer is borders and
+  // place names drawn for imagery, so state lines read over the ground.
+  satellite: {
+    base: `${ESRI_ROOT}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+    labels: `${ESRI_ROOT}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+    attribution: ESRI_IMAGERY_ATTRIBUTION,
+    maxNativeZoom: 18,
   },
 };
 
@@ -52,8 +63,8 @@ export function createMap(container, { center = [39, -98], zoom = 5, worldCopyJu
   });
 
   const base = BASEMAPS[theme] || BASEMAPS.dark;
-  const tiles = { maxZoom: 19, maxNativeZoom: BASEMAP_MAX_NATIVE_ZOOM, detectRetina: true };
-  L.tileLayer(base.base, { ...tiles, attribution: ESRI_ATTRIBUTION }).addTo(map);
+  const tiles = { maxZoom: 19, maxNativeZoom: base.maxNativeZoom ?? BASEMAP_MAX_NATIVE_ZOOM, detectRetina: true };
+  L.tileLayer(base.base, { ...tiles, attribution: base.attribution ?? ESRI_ATTRIBUTION }).addTo(map);
   // Labels go on immediately after the base, so both sit below the radar frames
   // and strike markers the sections add later.
   L.tileLayer(base.labels, tiles).addTo(map);

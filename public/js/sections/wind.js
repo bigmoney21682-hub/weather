@@ -1,10 +1,12 @@
 // Wind: sustained speed and gusts for today and the next two days, plus the
 // direction along the bottom. Pinch or scroll the graph to zoom in on a day.
+// Below that, a map of arrows over the whole state, hour by hour.
 
 import { api, el, clear, mount, f } from '../util.js';
 import { createSection, bindLocation, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
 import { windIcon, windArrow, compass } from '../icons.js';
+import { windField } from '../windfield.js';
 
 export function windSection() {
   const ui = createSection({
@@ -18,19 +20,20 @@ export function windSection() {
   const holder = el('div', { class: 'chart-holder' }, canvas);
   const stats = el('div', { class: 'stat-row' });
   const dirRow = el('div', { class: 'dir-row' });
-
-  clear(ui.body).append(
-    stats,
-    holder,
-    dirRow,
-    el(
-      'div',
-      { class: 'chart-legend' },
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--wind)' }), 'Sustained'),
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'Gusts'),
-      el('span', { class: 'hint', text: 'Pinch, scroll or drag to zoom · double-tap to reset' }),
-    ),
+  const legend = el(
+    'div',
+    { class: 'chart-legend' },
+    el('span', { class: 'key' }, el('i', { style: 'background:var(--wind)' }), 'Sustained'),
+    el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'Gusts'),
+    el('span', { class: 'hint', text: 'Pinch, scroll or drag to zoom · double-tap to reset' }),
   );
+  const field = windField();
+
+  // Clearing the location empties the body, so put the parts back on the next load.
+  const layout = () => {
+    if (stats.parentNode !== ui.body) clear(ui.body).append(stats, holder, dirRow, legend, field.node);
+  };
+  layout();
 
   // Axis labels follow the location's clock, not the viewer's.
   let tz;
@@ -44,6 +47,10 @@ export function windSection() {
   });
 
   bindLocation(ui, async (place) => {
+    layout();
+    // The map has its own status line and its own feed; a slow or failed map
+    // must not hold up or break the chart above it.
+    field.load(place);
     const data = await api('/api/weather', { lat: place.lat, lon: place.lon });
     render(data, place);
   });

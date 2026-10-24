@@ -20,6 +20,7 @@ import { getSurf } from './lib/surf.js';
 import { getAirQuality } from './lib/airquality.js';
 import { getOceanQuality } from './lib/oceanquality.js';
 import { getRadar } from './lib/radar.js';
+import { getWindMap } from './lib/windmap.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { coords, num } from './lib/util.js';
 
@@ -91,6 +92,12 @@ const routes = {
   async '/api/weather'(query) {
     const { lat, lon } = coords(query);
     return getForecast(lat, lon);
+  },
+
+  /** Hourly wind across the state a point is in, for the arrow map. */
+  async '/api/windmap'(query) {
+    const { lat, lon } = coords(query);
+    return getWindMap(lat, lon);
   },
 
   async '/api/alerts'(query) {

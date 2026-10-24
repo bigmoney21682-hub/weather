@@ -1435,6 +1435,53 @@ body.has-expanded-card {
   flex-basis: 100%;
 }
 
+/* -------------------------------------------------------------- wind map - */
+
+.wind-map .map {
+  background: #0b1a2a;
+}
+
+/* Leaflet's divIcon wrapper stays put; the inner svg turns and recolours, so
+   moving the slider never rebuilds a marker. */
+.wind-map-arrow {
+  background: none;
+  border: 0;
+}
+
+.wind-map-arrow svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  stroke: rgba(0, 0, 0, 0.65);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55));
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.wind-map-time {
+  min-width: 78px;
+}
+
+.wind-speed-bar {
+  background: linear-gradient(
+    90deg,
+    rgb(150, 170, 200) 0%,
+    rgb(94, 196, 255) 11%,
+    rgb(90, 220, 140) 22%,
+    rgb(240, 225, 80) 33%,
+    rgb(255, 160, 60) 44%,
+    rgb(240, 70, 70) 67%,
+    rgb(200, 80, 230) 100%
+  );
+}
+
+.wind-map-status {
+  margin-top: 8px;
+}
+
 /* -------------------------------------------------------------- lightning - */
 
 .watch-btn.active {

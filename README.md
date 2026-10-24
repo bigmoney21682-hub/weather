@@ -20,7 +20,7 @@ hammering the feeds. Searching, or tapping a saved pill, parks it again.
 - **Lightning** — live strikes from the Blitzortung sensor network, newest first.
   "Watch live" drops a dot on each new strike and expands a ring from it at the
   speed of sound, so the thunder reaches you when the ring does.
-- **Wind** — sustained speed and gusts for today plus two days, pinch-zoomable.
+- **Wind** — sustained speed and gusts for today plus two days, pinch-zoomable, and a satellite map of wind arrows across your state with an hourly slider out to the end of the day after tomorrow.
 - **Hurricane Tracker** — every active tropical cyclone worldwide, with forecast track,
   cone of uncertainty, wind field and intensity forecast in mph.
 - **Surf** — conditions at the nearest named surf spot on the open ocean, with the five
