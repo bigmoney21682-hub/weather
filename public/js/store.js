@@ -109,6 +109,66 @@ export function getDefaultPlace() {
 
 export { placeId };
 
+/* ----------------------------------------------------- saved surf spots -- */
+
+// { id, lat, lon, label, snap, isDefault } — the pills in the surf card. Kept
+// apart from the places above: a beach you check is not a town you live in, and
+// tapping one moves the surf card only, not the rest of the page. `snap` says
+// whether the server should report on the named break nearest the coordinate
+// (a spot picked off the coast) or on the coordinate itself (one typed in).
+const SPOTS_KEY = 'weather.surfspots.v1';
+const spotListeners = new Set();
+let spots = (read(SPOTS_KEY, []) || []).filter((p) => typeof p?.lat === 'number' && typeof p?.lon === 'number');
+
+function persistSpots() {
+  write(SPOTS_KEY, spots);
+  for (const fn of spotListeners) {
+    try {
+      fn(spots);
+    } catch (err) {
+      console.error('saved-spot listener failed', err);
+    }
+  }
+}
+
+export function onSavedSpots(fn) {
+  spotListeners.add(fn);
+  fn(spots);
+  return () => spotListeners.delete(fn);
+}
+
+/** Remember a surf spot as a pill. Unlike places, none is the default until starred. */
+export function saveSpot(spot) {
+  if (!spot) return null;
+  const id = placeId(spot);
+  const existing = spots.find((p) => p.id === id);
+  if (existing) {
+    existing.label = spot.label || existing.label;
+    persistSpots();
+    return existing;
+  }
+  const entry = { id, lat: spot.lat, lon: spot.lon, label: spot.label, snap: spot.snap !== false, isDefault: false };
+  spots = [...spots, entry];
+  persistSpots();
+  return entry;
+}
+
+export function removeSpot(id) {
+  spots = spots.filter((p) => p.id !== id);
+  persistSpots();
+}
+
+/** Star a spot to open the surf card on it; starring the starred one clears it. */
+export function setDefaultSpot(id) {
+  const was = spots.find((p) => p.id === id)?.isDefault;
+  spots = spots.map((p) => ({ ...p, isDefault: !was && p.id === id }));
+  persistSpots();
+}
+
+export function getDefaultSpot() {
+  return spots.find((p) => p.isDefault) || null;
+}
+
 /* ------------------------------------------------------------ device fix -- */
 
 // Where this device last reported itself to be, kept as a place id rather than

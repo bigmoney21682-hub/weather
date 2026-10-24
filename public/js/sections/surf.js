@@ -1,12 +1,21 @@
 // Surf: wave height, water temperature, the tide table, and which beach
 // up or down the coast has the biggest swell on it right now.
 
-import { api, el, clear, f, clock } from '../util.js';
+import { api, el, clear, mount, f, clock } from '../util.js';
 import { createSection, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
 import { expandableBox } from '../expand.js';
 import { compass, windArrow } from '../icons.js';
-import { onLocation, getLocation } from '../store.js';
+import {
+  onLocation,
+  getLocation,
+  onSavedSpots,
+  saveSpot,
+  removeSpot,
+  setDefaultSpot,
+  getDefaultSpot,
+  placeId,
+} from '../store.js';
 
 // Above this the waves are worth paddling out for; below it the chart says so
 // by draining the colour out of the line.
@@ -83,10 +92,15 @@ export function surfSection() {
   const tideHead = el('h4', { class: 'sub-head', text: 'Tides' });
   const biggestBox = el('div', { class: 'biggest' });
   const pillBox = el('div', { class: 'spot-pills' });
+  const savedBox = el('div', { class: 'place-pills surf-saved' });
+  const reportBox = el('div', { class: 'surf-report' });
 
   clear(ui.body).append(
+    savedBox,
     pillBox,
     stats,
+    // The numbers above, said in words — then the forecaster's own.
+    reportBox,
     // Tides sit right under the swell and water-temp tiles: they are part of
     // the same "should I paddle out?" glance, not an appendix.
     tideHead,
@@ -131,6 +145,11 @@ export function surfSection() {
   let selected = null;
   let place = null;
   let token = 0;
+  // Set by a deliberate pick, so the spot that pick lands on becomes a pill.
+  // Browsing to the nearest beach on a location change is not a pick.
+  let saveNext = false;
+  // The spot currently on the card, as a saved-pill id, for the highlight.
+  let showingId = null;
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -141,6 +160,7 @@ export function surfSection() {
     try {
       override = await api('/api/geocode', { q });
       selected = null;
+      saveNext = true;
       input.value = '';
       await load(override);
     } catch (err) {
@@ -160,8 +180,67 @@ export function surfSection() {
 
   function selectSpot(spot) {
     selected = { lat: spot.lat, lon: spot.lon };
+    saveNext = true;
     if (place) load(place);
   }
+
+  /** Open a saved pill: its own coast, wherever the page location is. */
+  function openSaved(p) {
+    override = { lat: p.lat, lon: p.lon, label: p.label, snap: p.snap, saved: true };
+    selected = p.snap ? { lat: p.lat, lon: p.lon } : null;
+    load(override);
+  }
+
+  // Saved spots, the same pills as the saved places at the top of the page:
+  // the name opens it, the star makes the surf card open on it, ✕ forgets it.
+  let savedList = [];
+  function renderSaved() {
+    clear(savedBox);
+    if (!savedList.length) return;
+    mount(savedBox,
+      el('span', { class: 'fine-print', text: 'Saved spots:' }),
+      savedList.map((p) =>
+        el(
+          'div',
+          { class: `place-pill${p.id === showingId ? ' active' : ''}` },
+          el('button', {
+            class: `place-star${p.isDefault ? ' is-default' : ''}`,
+            type: 'button',
+            title: p.isDefault ? 'The surf card opens here — tap to stop' : 'Open the surf card on this spot',
+            'aria-label': p.isDefault ? `${p.label} is the default surf spot` : `Make ${p.label} the default surf spot`,
+            'aria-pressed': String(Boolean(p.isDefault)),
+            text: p.isDefault ? '★' : '☆',
+            onClick() {
+              setDefaultSpot(p.id);
+            },
+          }),
+          el('button', {
+            class: 'place-pick',
+            type: 'button',
+            text: p.label,
+            title: `Surf report for ${p.label}`,
+            onClick() {
+              openSaved(p);
+            },
+          }),
+          el('button', {
+            class: 'place-del',
+            type: 'button',
+            title: `Forget ${p.label}`,
+            'aria-label': `Forget ${p.label}`,
+            text: '✕',
+            onClick() {
+              removeSpot(p.id);
+            },
+          }),
+        ),
+      ),
+    );
+  }
+  onSavedSpots((list) => {
+    savedList = list;
+    renderSaved();
+  });
 
   async function load(next) {
     place = next;
@@ -169,15 +248,23 @@ export function surfSection() {
     ui.loading('Reading the buoys…');
     try {
       // An explicitly searched spot is taken at its word; otherwise the server
-      // snaps to the nearest named beach on the open ocean.
+      // snaps to the nearest named beach on the open ocean. A saved spot that was
+      // picked off the coast snaps back onto the same break.
       const data = await api('/api/surf', {
         lat: place.lat,
         lon: place.lon,
         miles: 30,
-        snap: override ? '0' : '1',
+        snap: override && !override.snap ? '0' : '1',
         ...(selected ? { atLat: selected.lat, atLon: selected.lon } : {}),
       });
       if (mine !== token) return;
+      const shown = data.spot
+        ? { lat: data.spot.lat, lon: data.spot.lon, label: data.spot.name, snap: true }
+        : { lat: place.lat, lon: place.lon, label: place.label, snap: false };
+      if (saveNext) saveSpot(shown);
+      saveNext = false;
+      showingId = placeId(shown);
+      renderSaved();
       render(data);
       ui.ready();
       if (data.note) ui.note(data.note);
@@ -228,7 +315,13 @@ export function surfSection() {
     const beach = data.spot
       ? `${data.spot.name} · ${f.miles(data.spot.distanceMiles)} from ${place.label}`
       : `Open water near ${place.label} — no named beach found`;
-    ui.setSubtitle(override ? `${place.label} (spot override)` : beach);
+    ui.setSubtitle(
+      override?.snap && data.spot
+        ? `${data.spot.name}${override.saved ? ' · saved spot' : ''}`
+        : override
+          ? `${place.label} (spot override)`
+          : beach,
+    );
 
     // Everything below that needs to point at somewhere named falls back to the
     // location bar when the beach lookup came up empty.
@@ -246,6 +339,8 @@ export function surfSection() {
       statTile('Swell', f.ft(c.swellFt), c.swellPeriodS ? `${Math.round(c.swellPeriodS)} s` : null),
       statTile('Water temp', f.tempF(data.waterTempF), data.waterTempSource),
     );
+
+    renderReport(data);
 
     clear(biggestBox);
     if (data.biggest) {
@@ -319,6 +414,76 @@ export function surfSection() {
     }
   }
 
+  /** The written report, and the local NWS office's surf forecast under it. */
+  function renderReport(data) {
+    clear(reportBox);
+    const r = data.report;
+    const z = data.zoneForecast;
+    if (!r && !z) return;
+
+    if (r) {
+      mount(reportBox,
+        el('h4', { class: 'sub-head' }, 'Surf report', r.rating ? ratingBadge(r.rating) : null),
+        el('p', { class: 'report-now' }, el('b', { text: 'Right now: ' }), r.now),
+        r.later ? el('p', { class: 'report-now', text: r.later }) : null,
+        r.hasWind ? null : el('p', { class: 'fine-print', text: 'No wind forecast reached this spot, so the surface conditions are left out.' }),
+      );
+      if (r.days.length) {
+        mount(reportBox,
+          el('h4', { class: 'sub-head', text: 'Surf forecast' }),
+          el(
+            'div',
+            { class: 'report-days' },
+            r.days.map((d) =>
+              el(
+                'div',
+                { class: 'report-day' },
+                el('div', { class: 'report-day-head' }, el('b', { text: d.label }), d.rating ? ratingBadge(d.rating) : null),
+                el('p', { text: d.text }),
+              ),
+            ),
+          ),
+          el('p', {
+            class: 'fine-print',
+            text: 'Written from the marine model’s waves and the forecast wind at this beach, read against the way the beach faces.',
+          }),
+        );
+      }
+    }
+
+    if (z) {
+      const box = el('div', { class: 'nws-surf' });
+      mount(box,el('h4', { class: 'sub-head', text: `NWS surf zone forecast · ${z.area}` }));
+      if (z.headlines.length) {
+        mount(box,el('div', { class: 'nws-headlines' }, z.headlines.map((h) => el('span', { class: 'nws-headline', text: sentenceCase(h) }))));
+      }
+      if (z.shoreTable) {
+        mount(box,
+          el('p', {}, el('b', { text: `Surf on ${z.shoreTable.facing.toLowerCase()}: ` }), z.shoreTable.surf.map((s) => `${s.feet} ft ${s.when}`).join(', ') + '.'),
+        );
+      }
+      for (const p of z.periods) {
+        mount(box,el('p', {}, el('b', { text: `${p.name}: ` }), p.prose || p.fields.map(fieldSentence).join(' ')));
+      }
+      if (z.discussion) {
+        mount(box,el('details', { class: 'nws-discussion' }, el('summary', { text: 'Forecaster’s discussion' }), el('p', { text: z.discussion })));
+      }
+      mount(box,
+        el(
+          'p',
+          { class: 'fine-print' },
+          `Written by forecasters at the National Weather Service, ${z.office} — issued ${new Date(z.issued).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz })}. `,
+          el('a', { href: z.link, target: '_blank', rel: 'noopener noreferrer', text: 'Full text' }),
+        ),
+      );
+      mount(reportBox,box);
+    }
+  }
+
+  // A default spot opens the card on it, ahead of whatever is nearest home.
+  const preferredSpot = getDefaultSpot();
+  if (preferredSpot) openSaved(preferredSpot);
+
   onLocation((home) => {
     if (override) return;
     // A spot picked off the old coast means nothing on the new one.
@@ -331,4 +496,33 @@ export function surfSection() {
   });
 
   return ui.card;
+}
+
+const RATING_CLASS = { Flat: 'flat', Poor: 'poor', 'Poor to fair': 'poor', Fair: 'fair', 'Fair to good': 'good', Good: 'good', 'Very good': 'great' };
+
+function ratingBadge(rating) {
+  return el('span', { class: `surf-rating ${RATING_CLASS[rating] || 'fair'}`, text: rating });
+}
+
+/** NWS headlines arrive in capitals; read them at a normal volume. */
+function sentenceCase(text) {
+  const lower = text.toLowerCase().replace(/\b(edt|est|cdt|cst|mdt|mst|pdt|pst|hst|akdt|akst|nws)\b/g, (m) => m.toUpperCase())
+    .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g, (m) => m.charAt(0).toUpperCase() + m.slice(1));
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+function fieldSentence({ label, value }) {
+  const v = value.replace(/\.$/, '');
+  const low = v.charAt(0).toLowerCase() + v.slice(1);
+  switch (label) {
+    case 'Surf Height':
+    case 'Surf':
+      return `Surf ${low}.`;
+    case 'Rip Current Risk':
+      return `Rip current risk ${low}.`;
+    case 'Water Temperature':
+      return `Water ${/^\d/.test(v) ? v : low}.`;
+    default:
+      return `${v}.`;
+  }
 }

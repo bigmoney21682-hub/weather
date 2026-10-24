@@ -1856,6 +1856,114 @@ body.has-expanded-card {
   flex: 1 1 160px;
 }
 
+/* Saved surf spots: the same pills as the saved places in the location bar. */
+.surf-saved {
+  margin: 0 0 10px;
+}
+
+/* The report in words. */
+.surf-report .sub-head:first-child {
+  margin-top: 14px;
+}
+
+.report-now {
+  margin: 0 0 6px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.report-days {
+  display: grid;
+  gap: 8px;
+}
+
+.report-day {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surf) 5%, transparent);
+}
+
+.report-day-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.report-day p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.surf-rating {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.surf-rating.flat,
+.surf-rating.poor {
+  color: var(--surf-flat);
+}
+
+.surf-rating.fair {
+  color: var(--ink-dim);
+}
+
+.surf-rating.good {
+  color: var(--surf);
+}
+
+.surf-rating.great {
+  color: var(--sun);
+}
+
+.nws-surf p {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.nws-headlines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.nws-headline {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 8px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.nws-discussion {
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+
+.nws-discussion summary {
+  cursor: pointer;
+  color: var(--ink-dim);
+}
+
+.nws-discussion p {
+  margin-top: 6px;
+  color: var(--ink-dim);
+}
+
 /* The run of surf spots along the coast. One scrolling row, ordered the way the
    shore runs, with the ends labelled so it is obvious which way is up-coast. */
 .spot-pills {

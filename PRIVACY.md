@@ -11,6 +11,10 @@ One thing: the location you set, in this browser's `localStorage` under
 
 Clearing it (the ✕ in the location bar) deletes it from the device.
 
+Places you search for are kept as pills under the search box (`weather.places.v1`),
+and surf spots you pick in the Surf card as pills there (`weather.surfspots.v1`):
+a name and a coordinate each, plus which one is starred. The ✕ on a pill deletes it.
+
 The wind map also keeps the forecasts it has fetched, under `weather.windfield.v1`,
 so a reload does not ask Open-Meteo for the same arrows again. It holds wind numbers
 for points on an evenly spaced map grid — which does show roughly what part of the
@@ -71,7 +75,7 @@ survives a reload, and any deliberate choice of another place turns it off.
 
 ## Verifying this yourself
 
-- `grep -r "localStorage" public/js` — the location in `public/js/store.js`, and the
+- `grep -r "localStorage" public/js` — the location, saved places and saved surf spots in `public/js/store.js`, and the
   wind map's forecast cache in `public/js/windfield.js`.
 - Open the browser's network tab: the only hosts are your server, the tile hosts, and
   Open-Meteo for the wind map.
