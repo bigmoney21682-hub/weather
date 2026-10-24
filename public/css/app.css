@@ -1450,15 +1450,16 @@ body.has-expanded-card {
 
 .wind-map-arrow svg {
   display: block;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   fill: currentColor;
-  stroke: rgba(0, 0, 0, 0.65);
-  stroke-width: 1.4;
+  opacity: 0.72;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 1.3;
   stroke-linejoin: round;
   paint-order: stroke;
-  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55));
-  transition: transform 0.18s ease, color 0.18s ease;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4));
+  transition: transform 0.3s ease, color 0.3s ease;
 }
 
 .wind-map-time {

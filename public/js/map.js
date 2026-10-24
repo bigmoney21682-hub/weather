@@ -47,10 +47,11 @@ const BASEMAP_MAX_NATIVE_ZOOM = 16;
  * Create a map that is pinch-zoomable on touch and scroll-zoomable only after a
  * deliberate interaction, so the page still scrolls normally past it.
  */
-export function createMap(container, { center = [39, -98], zoom = 5, worldCopyJump = true, theme = 'dark' } = {}) {
+export function createMap(container, { center = [39, -98], zoom = 5, worldCopyJump = true, theme = 'dark', zoomSnap = 1 } = {}) {
   const map = L.map(container, {
     center,
     zoom,
+    zoomSnap,
     zoomControl: true,
     attributionControl: true,
     worldCopyJump,

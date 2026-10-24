@@ -1,7 +1,14 @@
-// The wind map under the Wind card's chart: a field of arrows over the state
-// you are in, on satellite imagery, with a slider from now to the end of the
-// day after tomorrow. Arrows point the way the wind is blowing, like the ones
-// along the chart and in the Forecast card's hourly row.
+// The wind map under the Wind card's chart: arrows over satellite imagery,
+// opening on the state you are in, with a slider (and a play button) from now
+// to the end of the day after tomorrow. Arrows point the way the wind is
+// blowing, like the ones along the chart and in the Forecast card's hourly row.
+//
+// The arrows are not a fixed grid over the state. They sit on a lattice laid
+// over whatever part of the map is on screen, so panning off the state or
+// zooming in fills the new ground too. The lattice is anchored to the map's
+// own pixel grid at a whole zoom level, and each level's points include every
+// point of the level above it, so panning back, or zooming in and out, finds
+// most arrows already fetched.
 
 import { api, el } from './util.js';
 import { createMap, homeMarker, observeSize } from './map.js';
@@ -9,6 +16,17 @@ import { compass } from './icons.js';
 
 // The same shape as `windArrow` in icons.js, so the map reads like the rows.
 const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l6 16-6-4-6 4z"/></svg>';
+const ARROW_PX = 16;
+
+// Pixels between arrows at the lattice's zoom. Between whole zoom levels the
+// map is scaled up, so on screen the spacing runs from this to twice it.
+const SPACING_PX = 28;
+// Past this zoom the lattice stops getting finer. The forecast models behind
+// Open-Meteo are a few kilometres across at best, so a denser field would only
+// repeat the same cell's wind — and cost a request per arrow to do it.
+const LATTICE_MAX_ZOOM = 9;
+
+const PLAY_STEP_MS = 650;
 
 // mph -> colour, calm to violent. Stops sit where the experience changes:
 // barely felt, a breeze, small-craft territory, hard to stand in.
@@ -38,26 +56,18 @@ function speedColor(mph) {
 // the server's IP is shared with strangers who spend its allowance; from here
 // it counts against the viewer's own. See PRIVACY.md.
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
-const FIELD_TTL_MS = 30 * 60 * 1000;
-const fieldCache = new Map(); // area bounds -> { expires, value }
+const POINT_TTL_MS = 30 * 60 * 1000;
+// Points per request. Open-Meteo takes far more, but a long URL is the first
+// thing a proxy refuses, and smaller batches let the nearest arrows land first.
+const BATCH = 150;
 
-/**
- * Hourly wind at every point of `geometry`, lined up on one clock.
- *
- * Each point's series starts at its own local midnight, so a state split
- * between two zones — or a grid reaching into Gulf water Open-Meteo files under
- * a nautical zone — does not line up by index. They are lined up by instant
- * instead, over the hours every point has.
- */
-async function fetchField(geometry) {
-  const key = geometry.area.bounds.join(',');
-  const hit = fieldCache.get(key);
-  if (hit && hit.expires > Date.now()) return hit.value;
+const pointCache = new Map(); // lattice key -> { lat, lon, start, mph, gust, dir, tz, fetched }
 
-  const { points } = geometry;
+/** Fetch hourly wind for `points` ({ key, lat, lon }) into the cache. */
+async function fetchPoints(points) {
   const url =
-    `${OPEN_METEO}?latitude=${points.map((p) => p.lat).join(',')}` +
-    `&longitude=${points.map((p) => p.lon).join(',')}` +
+    `${OPEN_METEO}?latitude=${points.map((p) => p.lat.toFixed(3)).join(',')}` +
+    `&longitude=${points.map((p) => p.fetchLon.toFixed(3)).join(',')}` +
     `&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=mph` +
     `&forecast_days=4&timeformat=unixtime&timezone=auto`;
   const res = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer' });
@@ -65,39 +75,49 @@ async function fetchField(geometry) {
   if (!res.ok) throw new Error(raw?.reason || `Open-Meteo answered ${res.status}`);
   const list = Array.isArray(raw) ? raw : [raw];
   if (list.length !== points.length) throw new Error('Open-Meteo returned the wrong number of wind points');
-
-  const first = Math.max(...list.map((r) => r.hourly.time[0]));
-  const last = Math.min(...list.map((r) => r.hourly.time[r.hourly.time.length - 1]));
-  const times = [];
-  for (let t = first; t <= last; t += 3600) times.push(t * 1000);
   const round = (v) => (v == null ? null : Math.round(v));
-  const along = (r, k) => {
-    const offset = r.hourly.time.indexOf(first);
-    return r.hourly[k].slice(offset, offset + times.length).map(round);
-  };
-
-  const value = {
-    area: geometry.area,
-    timezone: geometry.timezone || list[Math.floor(list.length / 2)].timezone,
-    times,
-    points: points.map((p, i) => ({
+  const fetched = Date.now();
+  points.forEach((p, i) => {
+    const h = list[i].hourly;
+    // Each point's series starts at its own local midnight, so values are
+    // looked up by instant rather than by index — see `at` below.
+    pointCache.set(p.key, {
       lat: p.lat,
       lon: p.lon,
-      mph: along(list[i], 'wind_speed_10m'),
-      gust: along(list[i], 'wind_gusts_10m'),
-      dir: along(list[i], 'wind_direction_10m'),
-    })),
-  };
-  fieldCache.set(key, { expires: Date.now() + FIELD_TTL_MS, value });
-  return value;
+      start: h.time[0] * 1000,
+      mph: h.wind_speed_10m.map(round),
+      gust: h.wind_gusts_10m.map(round),
+      dir: h.wind_direction_10m.map(round),
+      tz: list[i].timezone,
+      fetched,
+    });
+  });
 }
+
+/** A point's value of `series` at instant `ms`, or null outside its hours. */
+const at = (point, series, ms) => point[series][Math.round((ms - point.start) / 3600e3)] ?? null;
 
 /** Local calendar date in `tz` as 'YYYY-MM-DD'. */
 const localDate = (ms, tz) => new Date(ms).toLocaleDateString('en-CA', { timeZone: tz });
 
+/** Every hour from this one to the end of the day after tomorrow, in `tz`. */
+function hoursAhead(tz) {
+  const out = [];
+  let ms = Math.floor(Date.now() / 3600e3) * 3600e3;
+  const days = new Set();
+  for (;;) {
+    days.add(localDate(ms, tz));
+    if (days.size > 3) break;
+    out.push(ms);
+    ms += 3600e3;
+  }
+  return out;
+}
+
 export function windField() {
   const mapEl = el('div', { class: 'map map-tall', id: 'wind-map' });
   const timeLabel = el('span', { class: 'frame-time wind-map-time', text: '—' });
+  const playBtn = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Play', text: '▶' });
   const scrub = el('input', { type: 'range', class: 'scrub', min: '0', max: '0', step: '1', value: '0', 'aria-label': 'Forecast hour' });
   const nowBtn = el('button', { class: 'chip', type: 'button', text: 'Now' });
   const recenter = el('button', { class: 'chip', type: 'button', text: 'Recenter' });
@@ -108,7 +128,7 @@ export function windField() {
     { class: 'wind-map' },
     el('h4', { class: 'sub-head', text: 'Wind map' }),
     mapEl,
-    el('div', { class: 'map-controls' }, scrub, timeLabel, el('div', { class: 'control-group' }, nowBtn, recenter)),
+    el('div', { class: 'map-controls' }, playBtn, scrub, timeLabel, el('div', { class: 'control-group' }, nowBtn, recenter)),
     el(
       'div',
       { class: 'legend' },
@@ -121,119 +141,257 @@ export function windField() {
   );
 
   let map = null;
-  let arrows = []; // { marker, point }
   let layer = null;
   let home = null;
-  let data = null;
-  let hours = []; // indexes into data.times that the slider walks
+  let place = null;
+  let geometry = null; // { area: { bounds, center }, timezone }
+  let tz; // undefined reads in the browser's own zone until one is known
+  let hours = [];
+  const markers = new Map(); // lattice key -> marker on screen
+  const pending = new Set(); // lattice keys being fetched
   let token = 0;
-
-  function ensureMap(place) {
-    if (map) return map;
-    map = createMap(mapEl, { center: [place.lat, place.lon], zoom: 6, theme: 'satellite' });
-    layer = L.layerGroup().addTo(map);
-    observeSize(map, mapEl);
-    return map;
-  }
+  let moveTimer = null;
+  let playTimer = null;
 
   function setStatus(text) {
     status.textContent = text || '';
     status.classList.toggle('hidden', !text);
   }
 
-  function fit() {
-    if (!map || !data) return;
-    const [s, w, n, e] = data.area.bounds;
-    map.fitBounds([[s, w], [n, e]], { padding: [6, 6], animate: false });
-  }
-
-  function label(i) {
-    const ms = data.times[hours[i]];
-    if (i === 0) return 'Now';
-    return new Date(ms)
-      .toLocaleString([], { weekday: 'short', hour: 'numeric', timeZone: data.timezone })
-      .replace(',', '');
-  }
-
-  function show(i) {
-    const h = hours[i];
-    if (h == null) return;
-    timeLabel.textContent = label(i);
-    for (const { marker, point } of arrows) {
-      const glyph = marker.getElement()?.firstElementChild;
-      if (!glyph) continue;
-      const dir = point.dir[h];
-      const mph = point.mph[h];
-      glyph.style.transform = `rotate(${(dir ?? 0) + 180}deg) scale(${0.8 + Math.min(mph ?? 0, 40) / 80})`;
-      glyph.style.color = speedColor(mph);
-      glyph.style.opacity = dir == null ? '0' : '1';
-    }
-  }
-
-  function render(place) {
-    const nowHour = Math.floor(Date.now() / 3600e3) * 3600e3;
-    // Today and the two days after it, on the location's own calendar.
-    const days = [];
-    for (const t of data.times) {
-      const d = localDate(t, data.timezone);
-      if (!days.includes(d)) days.push(d);
-    }
-    const lastDay = days[days.indexOf(localDate(nowHour, data.timezone)) + 2] ?? days[days.length - 1];
-    hours = data.times
-      .map((t, i) => [t, i])
-      .filter(([t]) => t >= nowHour && localDate(t, data.timezone) <= lastDay)
-      .map(([, i]) => i);
-    if (!hours.length) throw new Error('The wind map has no hours left to show.');
-
-    ensureMap(place);
-    layer.clearLayers();
-    arrows = data.points.map((point) => {
-      const marker = L.marker([point.lat, point.lon], {
-        icon: L.divIcon({ className: 'wind-map-arrow', html: ARROW, iconSize: [22, 22], iconAnchor: [11, 11] }),
-        keyboard: false,
-      }).addTo(layer);
-      marker.bindTooltip(() => {
-        const h = hours[Number(scrub.value)];
-        const gust = point.gust[h];
-        return `${compass(point.dir[h])} ${point.mph[h] ?? '—'} mph${gust != null ? ` · gusts ${gust}` : ''}`;
-      }, { direction: 'top', offset: [0, -10] });
-      return { marker, point };
+  function ensureMap() {
+    if (map) return map;
+    map = createMap(mapEl, { center: [place.lat, place.lon], zoom: 6, theme: 'satellite', zoomSnap: 0.25 });
+    layer = L.layerGroup().addTo(map);
+    observeSize(map, mapEl);
+    map.on('moveend', () => {
+      clearTimeout(moveTimer);
+      moveTimer = setTimeout(refresh, 250);
     });
-
-    if (home) home.remove();
-    home = homeMarker(map, place.lat, place.lon, place.label);
-
-    scrub.max = String(hours.length - 1);
-    scrub.value = '0';
-    fit();
-    show(0);
+    return map;
   }
 
-  scrub.addEventListener('input', () => {
-    show(Number(scrub.value));
+  /**
+   * Open on the state, centred on the middle of its land. The zoom is the one
+   * that fits a box around that centre holding the whole state, so a lopsided
+   * state like Florida is centred and still shows the end of its panhandle.
+   */
+  function fit() {
+    if (!map || !geometry) return;
+    const [s, w, n, e] = geometry.area.bounds;
+    const [cLat, cLon] = geometry.area.center;
+    const halfLat = Math.max(n - cLat, cLat - s);
+    const halfLon = Math.max(e - cLon, cLon - w);
+    const box = L.latLngBounds([cLat - halfLat, cLon - halfLon], [cLat + halfLat, cLon + halfLon]);
+    map.setView([cLat, cLon], map.getBoundsZoom(box, false, L.point(16, 16)), { animate: false });
+  }
+
+  /** The lattice points covering the view, one cell beyond each edge. */
+  function latticeInView() {
+    const z = Math.min(Math.floor(map.getZoom()), LATTICE_MAX_ZOOM);
+    const b = map.getBounds();
+    const nw = map.project(b.getNorthWest(), z);
+    const se = map.project(b.getSouthEast(), z);
+    const out = [];
+    for (let i = Math.floor(nw.x / SPACING_PX) - 1; i <= Math.ceil(se.x / SPACING_PX) + 1; i++) {
+      for (let j = Math.floor(nw.y / SPACING_PX) - 1; j <= Math.ceil(se.y / SPACING_PX) + 1; j++) {
+        const ll = map.unproject([i * SPACING_PX, j * SPACING_PX], z);
+        if (Math.abs(ll.lat) > 85) continue;
+        const lat = Math.round(ll.lat * 1e4) / 1e4;
+        const lon = Math.round(ll.lng * 1e4) / 1e4;
+        // Leaflet keeps going past the antimeridian when you pan round the
+        // world; the arrow stays where it was drawn, the forecast asked for is
+        // the real longitude underneath it.
+        out.push({ key: `${lat},${lon}`, lat, lon, fetchLon: ((((lon + 180) % 360) + 360) % 360) - 180 });
+      }
+    }
+    return out;
+  }
+
+  function markerFor(key, point) {
+    const marker = L.marker([point.lat, point.lon], {
+      icon: L.divIcon({
+        className: 'wind-map-arrow',
+        html: ARROW,
+        iconSize: [ARROW_PX, ARROW_PX],
+        iconAnchor: [ARROW_PX / 2, ARROW_PX / 2],
+      }),
+      keyboard: false,
+    }).addTo(layer);
+    marker.bindTooltip(() => {
+      const ms = hours[Number(scrub.value)];
+      const mph = at(point, 'mph', ms);
+      const gust = at(point, 'gust', ms);
+      return `${compass(at(point, 'dir', ms))} ${mph ?? '—'} mph${gust != null ? ` · gusts ${gust}` : ''}`;
+    }, { direction: 'top', offset: [0, -8] });
+    markers.set(key, marker);
+    paint(marker, point);
+    return marker;
+  }
+
+  function paint(marker, point) {
+    const glyph = marker.getElement()?.firstElementChild;
+    if (!glyph) return;
+    const ms = hours[Number(scrub.value)];
+    const dir = at(point, 'dir', ms);
+    const mph = at(point, 'mph', ms);
+    glyph.style.transform = `rotate(${(dir ?? 0) + 180}deg) scale(${0.8 + Math.min(mph ?? 0, 40) / 80})`;
+    glyph.style.color = speedColor(mph);
+    glyph.style.visibility = dir == null ? 'hidden' : '';
+  }
+
+  function show() {
+    const i = Number(scrub.value);
+    timeLabel.textContent =
+      i === 0
+        ? 'Now'
+        : new Date(hours[i]).toLocaleString([], { weekday: 'short', hour: 'numeric', timeZone: tz }).replace(',', '');
+    for (const [key, marker] of markers) {
+      const point = pointCache.get(key);
+      if (point) paint(marker, point);
+    }
+  }
+
+  function setHours() {
+    const keep = hours[Number(scrub.value)];
+    hours = hoursAhead(tz);
+    scrub.max = String(hours.length - 1);
+    const i = hours.indexOf(keep);
+    scrub.value = String(i < 0 ? 0 : i);
+  }
+
+  /** Until the server names the zone, take it from the arrow nearest home. */
+  function adoptZone() {
+    if (tz || !place) return;
+    let best = null;
+    let bestD = Infinity;
+    for (const p of pointCache.values()) {
+      const d = (p.lat - place.lat) ** 2 + (p.lon - place.lon) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    if (best?.tz) {
+      tz = best.tz;
+      setHours();
+    }
+  }
+
+  /** Put arrows on whatever is on screen, fetching the ones not yet known. */
+  async function refresh() {
+    if (!map || !geometry) return;
+    const mine = token;
+    // A page left open rolls "now" forward with the clock.
+    if (hours[0] < Math.floor(Date.now() / 3600e3) * 3600e3) {
+      setHours();
+      show();
+    }
+    const wanted = latticeInView();
+    const wantedKeys = new Set(wanted.map((p) => p.key));
+
+    for (const [key, marker] of markers) {
+      if (!wantedKeys.has(key)) {
+        marker.remove();
+        markers.delete(key);
+      }
+    }
+
+    const now = Date.now();
+    const missing = [];
+    for (const p of wanted) {
+      const cached = pointCache.get(p.key);
+      if (cached && now - cached.fetched < POINT_TTL_MS) {
+        if (!markers.has(p.key)) markerFor(p.key, cached);
+      } else if (!pending.has(p.key)) {
+        missing.push(p);
+      }
+    }
+    if (!missing.length) return;
+
+    // Nearest the middle of the view first, so the part you are looking at fills in first.
+    const c = map.getCenter();
+    missing.sort((a, b) => (a.lat - c.lat) ** 2 + (a.lon - c.lng) ** 2 - ((b.lat - c.lat) ** 2 + (b.lon - c.lng) ** 2));
+    for (const p of missing) pending.add(p.key);
+    setStatus('Loading wind…');
+    try {
+      for (let k = 0; k < missing.length; k += BATCH) {
+        const batch = missing.slice(k, k + BATCH);
+        try {
+          await fetchPoints(batch);
+        } finally {
+          for (const p of batch) pending.delete(p.key);
+        }
+        if (mine !== token) return;
+        adoptZone();
+        const visible = new Set(latticeInView().map((p) => p.key));
+        for (const p of batch) {
+          const point = pointCache.get(p.key);
+          if (point && visible.has(p.key) && !markers.has(p.key)) markerFor(p.key, point);
+        }
+      }
+      setStatus('');
+    } catch (err) {
+      for (const p of missing) pending.delete(p.key);
+      if (mine === token) setStatus(`Wind map unavailable: ${err.message || 'could not load'}`);
+    }
+  }
+
+  function stop() {
+    clearInterval(playTimer);
+    playTimer = null;
+    playBtn.textContent = '▶';
+    playBtn.setAttribute('aria-label', 'Play');
+  }
+
+  function play() {
+    if (hours.length < 2) return;
+    if (Number(scrub.value) >= hours.length - 1) scrub.value = '0';
+    playBtn.textContent = '❚❚';
+    playBtn.setAttribute('aria-label', 'Pause');
+    playTimer = setInterval(() => {
+      const next = Number(scrub.value) + 1;
+      scrub.value = String(next > hours.length - 1 ? 0 : next);
+      onHour();
+    }, PLAY_STEP_MS);
+  }
+
+  function onHour() {
+    show();
     // A tooltip left open keeps the hour it opened on otherwise.
-    for (const { marker } of arrows) if (marker.isTooltipOpen()) marker.getTooltip().update();
+    for (const marker of markers.values()) if (marker.isTooltipOpen()) marker.getTooltip().update();
+  }
+
+  playBtn.addEventListener('click', () => (playTimer ? stop() : play()));
+  scrub.addEventListener('input', () => {
+    stop();
+    onHour();
   });
   nowBtn.addEventListener('click', () => {
+    stop();
     scrub.value = '0';
-    scrub.dispatchEvent(new Event('input'));
+    onHour();
   });
   recenter.addEventListener('click', fit);
 
   return {
     node,
-    /** Load the field for `place`. Failures stay on the map, not the card. */
-    async load(place) {
+    /** Load the field for `next`. Failures stay on the map, not the card. */
+    async load(next) {
       const mine = ++token;
+      place = next;
       setStatus('Loading the wind map…');
       try {
-        const geometry = await api('/api/windmap', { lat: place.lat, lon: place.lon });
+        const g = await api('/api/windmap', { lat: place.lat, lon: place.lon });
         if (mine !== token) return;
-        const next = await fetchField(geometry);
-        if (mine !== token) return;
-        data = next;
-        render(place);
-        setStatus('');
+        geometry = g;
+        tz = g.timezone || undefined;
+        setHours();
+        ensureMap();
+        if (home) home.remove();
+        home = homeMarker(map, place.lat, place.lon, place.label);
+        fit();
+        show();
+        await refresh();
       } catch (err) {
         if (mine !== token) return;
         setStatus(`Wind map unavailable: ${err.message || 'could not load'}`);
