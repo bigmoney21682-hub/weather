@@ -5,6 +5,7 @@
 import { api, el, clear, mount, f, clock } from '../util.js';
 import { createSection, bindLocation, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
+import { expandableBox } from '../expand.js';
 import { compass, windArrow } from '../icons.js';
 
 // Gauges are sorted into salt water and the fresh water running into it by
@@ -49,8 +50,7 @@ export function oceanSection() {
     factorHead,
     factors,
     chartHead,
-    holder,
-    legend,
+    expandableBox(holder, legend),
     gaugeHead,
     gauges,
     notes,

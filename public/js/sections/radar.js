@@ -25,6 +25,7 @@ import { createSection } from '../section.js';
 import { createMap, homeMarker, observeSize } from '../map.js';
 import { radarTileLayer, SIGNATURE_GRID } from '../radar-tiles.js';
 import { estimateShift } from '../radar-motion.js';
+import { expandable } from '../expand.js';
 import { onLocation, getLocation } from '../store.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><circle cx="12" cy="12" r="9" stroke="var(--radar)" stroke-width="1.6"/><circle cx="12" cy="12" r="5.5" stroke="var(--radar)" stroke-width="1.2" opacity=".6"/><circle cx="12" cy="12" r="2" fill="var(--radar)"/><path d="M12 12 19 7" stroke="var(--radar)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
@@ -497,55 +498,8 @@ export function radarSection() {
 
   /* --------------------------------------------------------- fullscreen -- */
 
-  // Filling the screen is done in two layers, because the Fullscreen API is not
-  // everywhere — iPhone Safari has never offered it for anything but a video.
-  // The class does the whole job on its own: the card is fixed to the viewport,
-  // above the sticky jump bar, with the map taking whatever the controls and the
-  // legend leave. Native fullscreen, where there is one, is asked for on top of
-  // that, and all it adds is dropping the browser's own chrome. Where it is
-  // missing or refused, the class is already the answer and nothing is lost.
-  //
-  // Either way it is the ResizeObserver in map.js that tells Leaflet its
-  // container changed size, so there is no invalidateSize to place by hand.
-  let expanded = false;
-
-  function paintExpanded(on) {
-    expanded = on;
-    ui.card.classList.toggle('card-expanded', on);
-    document.body.classList.toggle('has-expanded-card', on);
-    expandBtn.textContent = on ? 'Collapse' : 'Expand';
-    expandBtn.classList.toggle('active', on);
-    expandBtn.setAttribute('aria-expanded', String(on));
-  }
-
-  function expand() {
-    if (expanded) return;
-    paintExpanded(true);
-    // Both hops are optional: the method is missing on browsers that have no
-    // element fullscreen, and a refusal rejects. Neither is worth reporting —
-    // the card is already filling the screen either way.
-    ui.card.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {});
-  }
-
-  function collapse() {
-    if (!expanded) return;
-    paintExpanded(false);
-    if (document.fullscreenElement === ui.card) document.exitFullscreen()?.catch(() => {});
-  }
-
-  expandBtn.addEventListener('click', () => (expanded ? collapse() : expand()));
-
-  // Native fullscreen takes Escape for itself; this is for the fallback, where
-  // nothing but our own class is holding the card over the page.
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && expanded) collapse();
-  });
-
-  // Leaving fullscreen by a route the button does not own — Escape, the
-  // browser's own control, or another element taking fullscreen from us.
-  document.addEventListener('fullscreenchange', () => {
-    if (expanded && document.fullscreenElement !== ui.card) collapse();
-  });
+  // The whole card goes full screen, header and controls with it. See expand.js.
+  expandable(ui.card, expandBtn, { className: 'card-expanded' });
 
   /**
    * @param {boolean} announce Whether to show the wait. True for the loads a

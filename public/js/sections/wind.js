@@ -5,6 +5,7 @@
 import { api, el, clear, mount, f } from '../util.js';
 import { createSection, bindLocation, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
+import { expandableBox } from '../expand.js';
 import { windIcon, windArrow, compass } from '../icons.js';
 import { windField } from '../windfield.js';
 
@@ -27,11 +28,12 @@ export function windSection() {
     el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'Gusts'),
     el('span', { class: 'hint', text: 'Pinch, scroll or drag to zoom · double-tap to reset' }),
   );
+  const chartFrame = expandableBox(holder, dirRow, legend);
   const field = windField();
 
   // Clearing the location empties the body, so put the parts back on the next load.
   const layout = () => {
-    if (stats.parentNode !== ui.body) clear(ui.body).append(stats, holder, dirRow, legend, field.node);
+    if (stats.parentNode !== ui.body) clear(ui.body).append(stats, chartFrame, field.node);
   };
   layout();
 

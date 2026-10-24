@@ -42,8 +42,9 @@ A few requests go directly from your browser rather than through the server:
   limits requests per IP address, and the server's address is shared with other
   services on the same host, which often use up the day's allowance — so your
   browser asks instead. The request carries a grid of evenly spaced
-  coordinates covering whatever part of the map is on screen (it opens on your
-  state, or a ~250-mile box outside the US), not your own coordinate, and like everything else it is sent with no
+  coordinates covering whatever part of the map is on screen, within 100 miles
+  of your state (or of a ~250-mile box outside the US) unless you tap "Load
+  arrows here" to fetch further afield — not your own coordinate, and like everything else it is sent with no
   cookie and no referrer. Open-Meteo does see your IP address, as any site you
   load does.
 - Nothing else. There are no other outbound requests from the page.

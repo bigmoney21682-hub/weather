@@ -3,6 +3,7 @@
 import { api, el, clear, mount, clock } from '../util.js';
 import { createSection, bindLocation, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
+import { expandableBox } from '../expand.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><path d="M3 9h11a3 3 0 1 0-3-3" stroke="var(--air)" stroke-width="1.9" stroke-linecap="round"/><path d="M3 14h14a3 3 0 1 1-3 3" stroke="var(--air)" stroke-width="1.9" stroke-linecap="round"/><circle cx="19" cy="10" r="1.4" fill="var(--air)"/></svg>`;
 
@@ -24,13 +25,15 @@ export function airSection() {
     dial,
     stats,
     el('h4', { class: 'sub-head', text: 'Next 24 hours' }),
-    holder,
-    el(
-      'div',
-      { class: 'chart-legend' },
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--air)' }), 'US AQI'),
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'PM2.5 µg/m³'),
-      el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
+    expandableBox(
+      holder,
+      el(
+        'div',
+        { class: 'chart-legend' },
+        el('span', { class: 'key' }, el('i', { style: 'background:var(--air)' }), 'US AQI'),
+        el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'PM2.5 µg/m³'),
+        el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
+      ),
     ),
     el('h4', { class: 'sub-head', text: 'Nearby' }),
     advisories,

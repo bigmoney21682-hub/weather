@@ -5,6 +5,7 @@ import { api, el, clear, mount, f, clock } from '../util.js';
 import { createSection, statTile } from '../section.js';
 import { createMap, observeSize } from '../map.js';
 import { TimeChart } from '../chart.js';
+import { expandableBox } from '../expand.js';
 import { getLocation, onLocation } from '../store.js';
 
 const ICON = `<svg viewBox="0 0 24 24" class="wx-icon" fill="none"><path d="M12 12c4-4 9-3 9 1 0 3-4 5-9 5" stroke="var(--storm)" stroke-width="2" stroke-linecap="round"/><path d="M12 12c-4 4-9 3-9-1 0-3 4-5 9-5" stroke="var(--storm)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="2" fill="var(--storm)"/></svg>`;
@@ -32,7 +33,7 @@ export function hurricaneSection() {
   const picker = el('div', { class: 'storm-picker' });
   const detail = el('div', { class: 'storm-detail' });
 
-  clear(ui.body).append(picker, mapEl, detail);
+  clear(ui.body).append(picker, expandableBox(mapEl), detail);
 
   let map;
   let stormLayer;
@@ -260,13 +261,15 @@ export function hurricaneSection() {
       ),
       stats,
       el('h4', { class: 'sub-head', text: 'Forecast intensity' }),
-      chartHolder,
-      el(
-        'div',
-        { class: 'chart-legend' },
-        el('span', { class: 'key' }, el('i', { style: 'background:var(--wind)' }), 'Sustained wind'),
-        el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'Gusts'),
-        el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
+      expandableBox(
+        chartHolder,
+        el(
+          'div',
+          { class: 'chart-legend' },
+          el('span', { class: 'key' }, el('i', { style: 'background:var(--wind)' }), 'Sustained wind'),
+          el('span', { class: 'key' }, el('i', { style: 'background:var(--gust)' }), 'Gusts'),
+          el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
+        ),
       ),
       toggles,
       el('p', { class: 'fine-print', text: storm.coneNote }),

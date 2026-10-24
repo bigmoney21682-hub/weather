@@ -1322,6 +1322,68 @@ main {
   min-height: 0;
 }
 
+/* Any single map or chart filling the screen — see js/expand.js. The same idea
+   as the expanded card, for a frame inside a card: fixed to the viewport, with
+   the map or chart taking whatever the controls and legend leave. */
+.frame-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px max(12px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px))
+    max(12px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(180deg, var(--card) 0%, var(--card-2) 100%);
+  overflow: auto;
+}
+
+.frame-expanded > * {
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+/* `flex-basis: 0` so the height comes from the frame, not from the canvas the
+   chart last drew at — otherwise it could never shrink back. */
+.frame-expanded > .map,
+.frame-expanded > .chart-holder {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The corner button on a chart or map that has no row of controls to hold one. */
+.expand-corner {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000; /* over Leaflet's panes and controls */
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: rgba(10, 14, 23, 0.72);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.expand-corner:hover,
+.expand-corner:focus-visible,
+.expand-corner.active {
+  opacity: 1;
+}
+
+.expand-corner svg {
+  width: 16px;
+  height: 16px;
+}
+
 body.has-expanded-card {
   overflow: hidden;
 }
@@ -2431,7 +2493,9 @@ main > :nth-child(n + 6) { animation-delay: 0.2s; }
      the expanded card, and once it is full-screen the page is no longer
      competing for height, so its contents are left at full size too. */
   .card-expanded,
-  .card-expanded:fullscreen {
+  .card-expanded:fullscreen,
+  .frame-expanded,
+  .frame-expanded:fullscreen {
     zoom: calc(1 / var(--ui-scale));
   }
 }

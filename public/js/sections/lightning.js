@@ -9,6 +9,7 @@
 import { api, el, clear, relative, duration } from '../util.js';
 import { createSection } from '../section.js';
 import { createMap, homeMarker, observeSize } from '../map.js';
+import { expandableBox } from '../expand.js';
 import { onLocation, getLocation } from '../store.js';
 import { primeThunder, thunder, setThunderMuted, isThunderMuted } from '../thunder.js';
 
@@ -68,8 +69,10 @@ export function lightningSection() {
   );
 
   clear(ui.body).append(
-    mapEl,
-    el('div', { class: 'map-controls' }, radiusPicker, el('div', { class: 'control-group' }, watchBtn, soundBtn), summary),
+    expandableBox(
+      mapEl,
+      el('div', { class: 'map-controls' }, radiusPicker, el('div', { class: 'control-group' }, watchBtn, soundBtn), summary),
+    ),
     el('p', { class: 'watch-note fine-print hidden', text: '' }),
     list,
   );

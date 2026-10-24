@@ -4,6 +4,7 @@
 import { api, el, clear, f, clock } from '../util.js';
 import { createSection, statTile } from '../section.js';
 import { TimeChart } from '../chart.js';
+import { expandableBox } from '../expand.js';
 import { compass, windArrow } from '../icons.js';
 import { onLocation, getLocation } from '../store.js';
 
@@ -91,13 +92,15 @@ export function surfSection() {
     tideHead,
     tideBox,
     el('h4', { class: 'sub-head', text: 'Wave height forecast' }),
-    holder,
-    el(
-      'div',
-      { class: 'chart-legend' },
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--surf)' }), `Surfable (${SURFABLE_FT}ft+)`),
-      el('span', { class: 'key' }, el('i', { style: 'background:var(--surf-flat)' }), `Too small (under ${SURFABLE_FT}ft)`),
-      el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
+    expandableBox(
+      holder,
+      el(
+        'div',
+        { class: 'chart-legend' },
+        el('span', { class: 'key' }, el('i', { style: 'background:var(--surf)' }), `Surfable (${SURFABLE_FT}ft+)`),
+        el('span', { class: 'key' }, el('i', { style: 'background:var(--surf-flat)' }), `Too small (under ${SURFABLE_FT}ft)`),
+        el('span', { class: 'hint', text: 'Pinch or scroll to zoom' }),
+      ),
     ),
     biggestBox,
   );

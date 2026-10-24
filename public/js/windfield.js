@@ -3,16 +3,19 @@
 // to the end of the day after tomorrow. Arrows point the way the wind is
 // blowing, like the ones along the chart and in the Forecast card's hourly row.
 //
-// The arrows are not a fixed grid over the state. They sit on a lattice laid
-// over whatever part of the map is on screen, so panning off the state or
-// zooming in fills the new ground too. The lattice is anchored to the map's
-// own pixel grid at a whole zoom level, and each level's points include every
-// point of the level above it, so panning back, or zooming in and out, finds
-// most arrows already fetched.
+// The arrows sit on a lattice laid over whatever part of the map is on screen.
+// The lattice is anchored to the map's own pixel grid at a whole zoom level,
+// and each level's points include every point of the level above it, so
+// panning back, or zooming in and out, finds most arrows already fetched.
+//
+// Every arrow is one point of the viewer's own Open-Meteo allowance, so they
+// load on their own only within REACH_MILES of the state. Past that, the map
+// keeps whatever it already has and offers a button to load the view by hand.
 
 import { api, el } from './util.js';
 import { createMap, homeMarker, observeSize } from './map.js';
 import { compass } from './icons.js';
+import { expandable, expandChip } from './expand.js';
 
 // The same shape as `windArrow` in icons.js, so the map reads like the rows.
 const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l6 16-6-4-6 4z"/></svg>';
@@ -25,6 +28,12 @@ const SPACING_PX = 28;
 // Open-Meteo are a few kilometres across at best, so a denser field would only
 // repeat the same cell's wind — and cost a request per arrow to do it.
 const LATTICE_MAX_ZOOM = 9;
+// Most arrows on screen at once. A full-screen monitor would otherwise put a
+// few thousand on the map, every one a request; past this the lattice steps
+// to a coarser level, so a bigger map gets wider spacing rather than more.
+const MAX_ARROWS = 350;
+// How far past the state's edge arrows load without being asked.
+const REACH_MILES = 100;
 
 const PLAY_STEP_MS = 650;
 
@@ -121,6 +130,8 @@ export function windField() {
   const scrub = el('input', { type: 'range', class: 'scrub', min: '0', max: '0', step: '1', value: '0', 'aria-label': 'Forecast hour' });
   const nowBtn = el('button', { class: 'chip', type: 'button', text: 'Now' });
   const recenter = el('button', { class: 'chip', type: 'button', text: 'Recenter' });
+  const loadHere = el('button', { class: 'chip', type: 'button', text: 'Load arrows here', title: 'Fetch wind for everything on screen' });
+  const expandBtn = expandChip();
   const status = el('p', { class: 'fine-print wind-map-status hidden' });
 
   const node = el(
@@ -128,7 +139,14 @@ export function windField() {
     { class: 'wind-map' },
     el('h4', { class: 'sub-head', text: 'Wind map' }),
     mapEl,
-    el('div', { class: 'map-controls' }, playBtn, scrub, timeLabel, el('div', { class: 'control-group' }, nowBtn, recenter)),
+    el(
+      'div',
+      { class: 'map-controls' },
+      playBtn,
+      scrub,
+      timeLabel,
+      el('div', { class: 'control-group' }, nowBtn, recenter, loadHere, expandBtn),
+    ),
     el(
       'div',
       { class: 'legend' },
@@ -145,6 +163,7 @@ export function windField() {
   let home = null;
   let place = null;
   let geometry = null; // { area: { bounds, center }, timezone }
+  let reach = null; // L.LatLngBounds arrows load inside unasked
   let tz; // undefined reads in the browser's own zone until one is known
   let hours = [];
   const markers = new Map(); // lattice key -> marker on screen
@@ -187,7 +206,10 @@ export function windField() {
 
   /** The lattice points covering the view, one cell beyond each edge. */
   function latticeInView() {
-    const z = Math.min(Math.floor(map.getZoom()), LATTICE_MAX_ZOOM);
+    const size = map.getSize();
+    const need = Math.sqrt((size.x * size.y) / MAX_ARROWS);
+    const coarser = Math.log2(Math.max(1, need / SPACING_PX));
+    const z = Math.max(0, Math.min(Math.floor(map.getZoom() - coarser), LATTICE_MAX_ZOOM));
     const b = map.getBounds();
     const nw = map.project(b.getNorthWest(), z);
     const se = map.project(b.getSouthEast(), z);
@@ -277,8 +299,11 @@ export function windField() {
     }
   }
 
-  /** Put arrows on whatever is on screen, fetching the ones not yet known. */
-  async function refresh() {
+  /**
+   * Put arrows on whatever is on screen, fetching the ones not yet known —
+   * within reach of the state, or everywhere in view when `manual`.
+   */
+  async function refresh({ manual = false } = {}) {
     if (!map || !geometry) return;
     const mine = token;
     // A page left open rolls "now" forward with the clock.
@@ -298,15 +323,26 @@ export function windField() {
 
     const now = Date.now();
     const missing = [];
+    let outOfReach = 0;
     for (const p of wanted) {
       const cached = pointCache.get(p.key);
       if (cached && now - cached.fetched < POINT_TTL_MS) {
         if (!markers.has(p.key)) markerFor(p.key, cached);
-      } else if (!pending.has(p.key)) {
+      } else if (pending.has(p.key)) {
+        // already on its way
+      } else if (manual || reach.contains([p.lat, p.fetchLon])) {
         missing.push(p);
+      } else {
+        outOfReach++;
       }
     }
-    if (!missing.length) return;
+    const reachNote = outOfReach
+      ? `Arrows load on their own within ${REACH_MILES} miles of ${geometry.area.name || 'your area'}. Tap “Load arrows here” for the rest of this view.`
+      : '';
+    if (!missing.length) {
+      if (!pending.size) setStatus(reachNote);
+      return;
+    }
 
     // Nearest the middle of the view first, so the part you are looking at fills in first.
     const c = map.getCenter();
@@ -323,13 +359,14 @@ export function windField() {
         }
         if (mine !== token) return;
         adoptZone();
+        show();
         const visible = new Set(latticeInView().map((p) => p.key));
         for (const p of batch) {
           const point = pointCache.get(p.key);
           if (point && visible.has(p.key) && !markers.has(p.key)) markerFor(p.key, point);
         }
       }
-      setStatus('');
+      setStatus(reachNote);
     } catch (err) {
       for (const p of missing) pending.delete(p.key);
       if (mine === token) setStatus(`Wind map unavailable: ${err.message || 'could not load'}`);
@@ -372,6 +409,8 @@ export function windField() {
     onHour();
   });
   recenter.addEventListener('click', fit);
+  loadHere.addEventListener('click', () => refresh({ manual: true }));
+  expandable(node, expandBtn);
 
   return {
     node,
@@ -384,6 +423,10 @@ export function windField() {
         const g = await api('/api/windmap', { lat: place.lat, lon: place.lon });
         if (mine !== token) return;
         geometry = g;
+        const [s, w, n, e] = g.area.bounds;
+        const dLat = REACH_MILES / 69;
+        const dLon = REACH_MILES / (69 * Math.max(0.2, Math.cos((((s + n) / 2) * Math.PI) / 180)));
+        reach = L.latLngBounds([s - dLat, w - dLon], [n + dLat, e + dLon]);
         tz = g.timezone || undefined;
         setHours();
         ensureMap();
